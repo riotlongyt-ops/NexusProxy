@@ -1,0 +1,20 @@
+{
+  "short_name": "Nexus",
+  "name": "Nexus Browser",
+  "icons": [
+    {
+      "src": "https://picsum.photos/seed/nexus/192/192",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://picsum.photos/seed/nexus/512/512",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#1a1a1a",
+  "background_color": "#1a1a1a"
+}

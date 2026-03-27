@@ -1,11 +1,26 @@
-<div align="center">
+# Nexus Browser
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+A modern, web-based browser with a built-in proxy to bypass CORS and frame restrictions.
 
-  <h1>Built with AI Studio</h2>
+## Features
+- **Tabbed Browsing**: Open multiple sites at once.
+- **Proxy Mode**: Built-in Express proxy to load sites that block iframes.
+- **Device Toggles**: Switch between Desktop and Mobile views.
+- **PWA Support**: Installable as a standalone app on desktop and mobile.
+- **Vercel Ready**: Includes configuration for easy deployment to Vercel.
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+## Local Setup (Offline Use)
+1. Clone or download this project.
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+3. Start the server:
+   ```bash
+   npm run dev
+   ```
+4. Open `http://localhost:3000` in your browser.
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
-
-</div>
+## Deployment
+- **Vercel**: Simply push to a GitHub repo and connect to Vercel. The `vercel.json` and `api/proxy.ts` are already configured.
+- **Netlify**: Similar to Vercel, but you may need to adapt the proxy to a Netlify Function.
