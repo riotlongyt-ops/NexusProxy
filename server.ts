@@ -10,6 +10,7 @@ import { CookieJar } from "tough-cookie";
 import { createBareServer } from "@tomphttp/bare-server-node";
 import * as cheerio from "cheerio";
 import { v4 as uuidv4 } from "uuid";
+import { wisp } from "wisp-server-node";
 
 // In-memory cookie jars indexed by session ID
 const cookieJars: Record<string, CookieJar> = {};
@@ -17,6 +18,27 @@ const cookieJars: Record<string, CookieJar> = {};
 // Simple in-memory cache for proxy requests
 const proxyCache = new Map<string, { data: Buffer, headers: any, status: number, timestamp: number }>();
 const CACHE_TTL = 1000 * 60 * 5; // 5 minutes
+
+// XOR encoding/decoding for "random unique" URLs
+const config = {
+  prefix: '/nexus/',
+  encodeUrl: (url: string) => {
+    if (!url) return url;
+    const xored = url.split('').map((char, i) => i % 2 ? String.fromCharCode(char.charCodeAt(0) ^ 2) : char).join('');
+    return Buffer.from(xored).toString('base64').replace(/\//g, '_').replace(/\+/g, '-').replace(/=/g, '');
+  },
+  decodeUrl: (url: string) => {
+    if (!url) return url;
+    try {
+      let str = url.replace(/_/g, '/').replace(/-/g, '+');
+      while (str.length % 4) str += '=';
+      const decoded = Buffer.from(str, 'base64').toString('utf-8');
+      return decoded.split('').map((char, i) => i % 2 ? String.fromCharCode(char.charCodeAt(0) ^ 2) : char).join('');
+    } catch (e) {
+      return url;
+    }
+  }
+};
 
 async function startServer() {
   const app = express();
@@ -61,7 +83,7 @@ async function startServer() {
         if (val && !val.startsWith('data:') && !val.startsWith('javascript:')) {
           try {
             const absolute = new URL(val, baseUrl).href;
-            $(el).attr(attr, `${proxyUrlBase}?url=${encodeURIComponent(absolute)}`);
+            $(el).attr(attr, `${config.prefix}${config.encodeUrl(absolute)}`);
           } catch (e) {
             // Ignore invalid URLs
           }
@@ -74,7 +96,7 @@ async function startServer() {
         if (url.startsWith('data:') || url.startsWith('blob:')) return match;
         try {
           const absolute = new URL(url, baseUrl).href;
-          return `url("${proxyUrlBase}?url=${encodeURIComponent(absolute)}")`;
+          return `url("${config.prefix}${config.encodeUrl(absolute)}")`;
         } catch (e) {
           return match;
         }
@@ -95,6 +117,10 @@ async function startServer() {
     rewriteAttr('track', 'src');
     rewriteAttr('object', 'data');
     rewriteAttr('base', 'href');
+    rewriteAttr('use', 'href');
+    rewriteAttr('use', 'xlink:href');
+    rewriteAttr('image', 'href');
+    rewriteAttr('image', 'xlink:href');
 
     // Handle srcset
     $('img[srcset], source[srcset]').each((_, el) => {
@@ -108,12 +134,41 @@ async function startServer() {
           const size = parts.slice(1).join(' ');
           try {
             const absolute = new URL(url, baseUrl).href;
-            return `${proxyUrlBase}?url=${encodeURIComponent(absolute)}${size ? ' ' + size : ''}`;
+            return `${config.prefix}${config.encodeUrl(absolute)}${size ? ' ' + size : ''}`;
           } catch (e) {
             return part;
           }
         }).join(', ');
         $(el).attr('srcset', rewritten);
+      }
+    });
+
+    // Handle meta tags (refresh, og:image, etc.)
+    $('meta[property="og:image"], meta[property="og:url"], meta[name="twitter:image"]').each((_, el) => {
+      const content = $(el).attr('content');
+      if (content && !content.startsWith('data:')) {
+        try {
+          const absolute = new URL(content, baseUrl).href;
+          $(el).attr('content', `${config.prefix}${config.encodeUrl(absolute)}`);
+        } catch (e) {}
+      }
+    });
+
+    // Handle meta refresh
+    $('meta[http-equiv="refresh"]').each((_, el) => {
+      const content = $(el).attr('content');
+      if (content) {
+        const parts = content.split(';');
+        if (parts.length > 1) {
+          const urlPart = parts[1].trim();
+          if (urlPart.toLowerCase().startsWith('url=')) {
+            const url = urlPart.slice(4);
+            try {
+              const absolute = new URL(url, baseUrl).href;
+              $(el).attr('content', `${parts[0]}; url=${config.prefix}${config.encodeUrl(absolute)}`);
+            } catch (e) {}
+          }
+        }
       }
     });
 
@@ -129,24 +184,179 @@ async function startServer() {
       $(el).text(rewriteCSS(css));
     });
 
-    // Inject a script to handle dynamic navigation, fetch, and XHR within the iframe
-    $('head').prepend(`
+    // Rewrite <script> tags to shadow location and other globals
+    $('script').each((_, el) => {
+      const script = $(el).text();
+      if (script && !$(el).attr('src')) {
+        $(el).text(`
+          (function() {
+            const __nexus_original_location = window.location;
+            const location = new Proxy(__nexus_original_location, {
+              get(target, prop) {
+                if (prop === 'href') return "${baseUrl}";
+                if (prop === 'origin') return "${new URL(baseUrl).origin}";
+                if (prop === 'host') return "${new URL(baseUrl).host}";
+                if (prop === 'hostname') return "${new URL(baseUrl).hostname}";
+                if (prop === 'assign' || prop === 'replace') return (url) => __nexus_original_location[prop](window.proxyUrl(url));
+                return target[prop];
+              },
+              set(target, prop, value) {
+                if (prop === 'href') __nexus_original_location.href = window.proxyUrl(value);
+                else target[prop] = value;
+                return true;
+              }
+            });
+            try {
+              ${script}
+            } catch (e) {
+              console.error("Nexus Script Error:", e);
+            }
+          })();
+        `);
+      }
+    });
+
+    // Inject the sliding navigation bar and interception script
+    $('body').prepend(`
+      <div id="__nexus_nav_trigger" style="position: fixed; top: 0; left: 0; width: 100%; height: 10px; z-index: 1000000; cursor: pointer;"></div>
+      <div id="__nexus_nav_bar" style="position: fixed; top: 0; left: 0; width: 100%; height: 60px; background: #0a0a0a; border-bottom: 1px solid rgba(255,255,255,0.1); z-index: 1000001; transform: translateY(-100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); display: flex; items-center: center; padding: 0 20px; gap: 15px; font-family: sans-serif; color: white; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <button onclick="window.location.href='/'" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: white; padding: 8px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center;" title="Home">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          </button>
+          <button onclick="window.history.back()" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: white; padding: 8px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center;" title="Back">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+          </button>
+        </div>
+        <div style="flex: 1; display: flex; align-items: center; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 0 15px;">
+          <input id="__nexus_url_input" type="text" value="${baseUrl}" style="width: 100%; background: transparent; border: none; color: white; font-size: 14px; outline: none; padding: 10px 0;" placeholder="Search or enter address">
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <button id="__nexus_add_shortcut" style="background: #2563eb; border: none; color: white; padding: 8px 15px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;" title="Add Shortcut">Add Shortcut</button>
+          <button id="__nexus_view_cookies" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: white; padding: 8px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center;" title="Cookies">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-5 4 4 0 0 1-5-5"/><path d="M8.5 8.5v.01"/><path d="M16 15.5v.01"/><path d="M12 12v.01"/><path d="M11 17v.01"/><path d="M7 13v.01"/></svg>
+          </button>
+          <button id="__nexus_view_settings" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: white; padding: 8px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center;" title="Settings">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <style>
+        #__nexus_nav_trigger:hover + #__nexus_nav_bar, #__nexus_nav_bar:hover {
+          transform: translateY(0) !important;
+        }
+      </style>
       <script>
         (function() {
-          const proxyBase = "${proxyUrlBase}";
-          const currentTargetUrl = "${baseUrl}";
-          const targetOrigin = new URL(currentTargetUrl).origin;
-          const targetHostname = new URL(currentTargetUrl).hostname;
-          
-          function proxyUrl(url) {
+          const navBar = document.getElementById('__nexus_nav_bar');
+          const urlInput = document.getElementById('__nexus_url_input');
+          const addShortcutBtn = document.getElementById('__nexus_add_shortcut');
+          const viewCookiesBtn = document.getElementById('__nexus_view_cookies');
+          const viewSettingsBtn = document.getElementById('__nexus_view_settings');
+
+          const config = {
+            prefix: '/nexus/',
+            encodeUrl: (url) => {
+              if (!url) return url;
+              const xored = url.split('').map((char, i) => i % 2 ? String.fromCharCode(char.charCodeAt(0) ^ 2) : char).join('');
+              return btoa(xored).replace(/\//g, '_').replace(/\+/g, '-').replace(/=/g, '');
+            },
+            decodeUrl: (url) => {
+              if (!url) return url;
+              try {
+                let str = url.replace(/_/g, '/').replace(/-/g, '+');
+                while (str.length % 4) str += '=';
+                const decoded = atob(str);
+                return decoded.split('').map((char, i) => i % 2 ? String.fromCharCode(char.charCodeAt(0) ^ 2) : char).join('');
+              } catch (e) {
+                return url;
+              }
+            }
+          };
+
+          urlInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+              let url = urlInput.value;
+              if (!url.startsWith('http')) {
+                if (url.includes('.') && !url.includes(' ')) url = 'https://' + url;
+                else url = 'https://www.google.com/search?q=' + encodeURIComponent(url);
+              }
+              window.location.href = config.prefix + config.encodeUrl(url);
+            }
+          });
+
+          addShortcutBtn.addEventListener('click', () => {
+            const name = prompt('Shortcut Name:', document.title || 'New Shortcut');
+            if (name) {
+              const shortcuts = JSON.parse(localStorage.getItem('nexus_shortcuts') || '[]');
+              shortcuts.push({ name, url: "${baseUrl}" });
+              localStorage.setItem('nexus_shortcuts', JSON.stringify(shortcuts));
+              alert('Shortcut added!');
+            }
+          });
+
+          viewCookiesBtn.addEventListener('click', () => {
+            window.location.href = '/?cookies=true';
+          });
+
+          viewSettingsBtn.addEventListener('click', () => {
+            window.location.href = '/?settings=true';
+          });
+
+          // Interception logic
+          window.proxyUrl = function(url) {
             if (!url || typeof url !== 'string') return url;
-            if (url.startsWith('data:') || url.startsWith('javascript:') || url.startsWith('blob:') || url.includes(proxyBase)) return url;
+            if (url.startsWith('data:') || url.startsWith('javascript:') || url.startsWith('blob:') || url.includes(config.prefix)) return url;
             try {
-              const absolute = new URL(url, currentTargetUrl).href;
-              return proxyBase + "?url=" + encodeURIComponent(absolute);
+              const absolute = new URL(url, "${baseUrl}").href;
+              return config.prefix + config.encodeUrl(absolute);
             } catch (e) {
               return url;
             }
+          }
+
+          function proxyUrl(url) {
+            return window.proxyUrl(url);
+          }
+
+          // Storage isolation
+          try {
+            const hostname = new URL("${baseUrl}").hostname;
+            const storagePrefix = "__nexus_storage_" + hostname + "_";
+            
+            const wrapStorage = (storage, prefix) => {
+              return {
+                getItem: (key) => storage.getItem(prefix + key),
+                setItem: (key, value) => storage.setItem(prefix + key, value),
+                removeItem: (key) => storage.removeItem(prefix + key),
+                clear: () => {
+                  Object.keys(storage).forEach(key => {
+                    if (key.startsWith(prefix)) storage.removeItem(key);
+                  });
+                },
+                key: (index) => {
+                  const keys = Object.keys(storage).filter(k => k.startsWith(prefix));
+                  return keys[index] ? keys[index].slice(prefix.length) : null;
+                },
+                get length() {
+                  return Object.keys(storage).filter(k => k.startsWith(prefix)).length;
+                }
+              };
+            };
+
+            // Attempt to override storage
+            const originalLS = window.localStorage;
+            const originalSS = window.sessionStorage;
+            const nexusLS = wrapStorage(originalLS, storagePrefix);
+            const nexusSS = wrapStorage(originalSS, storagePrefix);
+
+            // We can't redefine window.localStorage directly in most browsers, 
+            // but we can try to shadow it in the current scope or use a proxy.
+            // For now, we'll just provide them as global variables that scripts might use.
+            window.nexusLocalStorage = nexusLS;
+            window.nexusSessionStorage = nexusSS;
+          } catch (e) {
+            console.error("Storage isolation error:", e);
           }
 
           // Intercept fetch
@@ -167,94 +377,12 @@ async function startServer() {
             return originalOpen.call(this, method, proxyUrl(url), ...args);
           };
 
-          // Intercept Web Workers
-          const originalWorker = window.Worker;
-          window.Worker = function(url, options) {
-            return new originalWorker(proxyUrl(url), options);
-          };
-
-          // Intercept navigator.sendBeacon
-          const originalSendBeacon = navigator.sendBeacon;
-          navigator.sendBeacon = function(url, data) {
-            return originalSendBeacon.call(navigator, proxyUrl(url), data);
-          };
-
-          // Intercept EventSource
-          const originalEventSource = window.EventSource;
-          window.EventSource = function(url, config) {
-            return new originalEventSource(proxyUrl(url), config);
-          };
-
-          // Intercept WebSocket (Basic wrapper)
-          const originalWebSocket = window.WebSocket;
-          window.WebSocket = function(url, protocols) {
-            // Note: Bare server handles WS better, but this is a fallback
-            if (typeof url === 'string' && !url.includes(proxyBase)) {
-               // We don't have a WS proxy endpoint here, but we could add one
-            }
-            return new originalWebSocket(url, protocols);
-          };
-
-          // Intercept localStorage and sessionStorage
-          const storagePrefix = "__nexus_" + targetHostname + "_";
-          const wrapStorage = (storage) => {
-            const originalGetItem = storage.getItem;
-            const originalSetItem = storage.setItem;
-            const originalRemoveItem = storage.removeItem;
-            const originalKey = storage.key;
-            const originalClear = storage.clear;
-
-            storage.getItem = function(key) { return originalGetItem.call(storage, storagePrefix + key); };
-            storage.setItem = function(key, val) { return originalSetItem.call(storage, storagePrefix + key, val); };
-            storage.removeItem = function(key) { return originalRemoveItem.call(storage, storagePrefix + key); };
-            storage.clear = function() {
-              const keys = [];
-              for (let i = 0; i < storage.length; i++) {
-                const k = originalKey.call(storage, i);
-                if (k && k.startsWith(storagePrefix)) keys.push(k);
-              }
-              keys.forEach(k => originalRemoveItem.call(storage, k));
-            };
-          };
-          wrapStorage(window.localStorage);
-          wrapStorage(window.sessionStorage);
-
-          // Intercept window.open
-          const originalOpenWindow = window.open;
-          window.open = function(url, target, features) {
-            return originalOpenWindow.call(this, proxyUrl(url), target, features);
-          };
-
-          // Intercept location.replace and location.assign
-          const originalReplace = window.location.replace;
-          window.location.replace = function(url) {
-            return originalReplace.call(window.location, proxyUrl(url));
-          };
-          const originalAssign = window.location.assign;
-          window.location.assign = function(url) {
-            return originalAssign.call(window.location, proxyUrl(url));
-          };
-
-          // Frame busting protection
-          Object.defineProperty(window, 'top', { get: () => window });
-          Object.defineProperty(window, 'parent', { get: () => window });
-          Object.defineProperty(document, 'referrer', { get: () => targetOrigin });
-
-          // Spoof location properties where possible
-          const targetLocation = new URL(currentTargetUrl);
-          try {
-            Object.defineProperty(document, 'domain', { 
-              get: () => targetLocation.hostname,
-              set: (v) => v 
-            });
-          } catch (e) {}
-
           // Intercept clicks
           window.addEventListener('click', (e) => {
             const link = e.target.closest('a');
             if (link && link.href && !link.href.startsWith('javascript:')) {
               const href = link.getAttribute('href');
-              if (href && !href.startsWith('#') && !href.includes(proxyBase)) {
+              if (href && !href.startsWith('#') && !href.includes(config.prefix)) {
                 e.preventDefault();
                 window.location.href = proxyUrl(href);
               }
@@ -265,81 +393,60 @@ async function startServer() {
           window.addEventListener('submit', (e) => {
             const form = e.target;
             const action = form.getAttribute('action');
-            const method = (form.getAttribute('method') || 'GET').toUpperCase();
-            
-            if (action && !action.includes(proxyBase)) {
-              const proxiedAction = proxyUrl(action);
-              if (method === 'GET') {
-                try {
-                  const urlObj = new URL(proxiedAction, window.location.href);
-                  const targetUrl = urlObj.searchParams.get('url');
-                  if (targetUrl) {
-                    const existing = form.querySelector('input[name="url"]');
-                    if (existing) existing.remove();
-                    
-                    const hidden = document.createElement('input');
-                    hidden.type = 'hidden';
-                    hidden.name = 'url';
-                    hidden.value = targetUrl;
-                    form.appendChild(hidden);
-                    form.action = proxyBase;
-                    return;
-                  }
-                } catch (e) {}
-              }
-              form.action = proxiedAction;
+            if (action && !action.includes(config.prefix)) {
+              form.action = proxyUrl(action);
             }
           }, true);
 
-          // Notify parent of URL change
-          if (window.parent !== window) {
-            const urlParam = new URLSearchParams(window.location.search).get('url');
-            window.parent.postMessage({ 
-              type: 'PROXY_URL_CHANGE', 
-              url: urlParam || window.location.href 
-            }, '*');
-          }
+          // Intercept location and navigation
+          const originalLocation = window.location;
+          const locationHandler = {
+            get(target, prop) {
+              if (prop === 'href') return config.decodeUrl(originalLocation.pathname.slice(config.prefix.length)) || originalLocation.href;
+              if (prop === 'assign' || prop === 'replace') return (url) => originalLocation[prop](proxyUrl(url));
+              return target[prop];
+            },
+            set(target, prop, value) {
+              if (prop === 'href') originalLocation.href = proxyUrl(value);
+              else target[prop] = value;
+              return true;
+            }
+          };
 
-          // Handle dynamic element creation
+          // We can't actually replace window.location, but we can try to shadow it for scripts
+          // by wrapping the execution or using other tricks. For now, we'll focus on 
+          // intercepting APIs that scripts use to navigate.
+
+          // Intercept history
+          const originalPushState = history.pushState;
+          history.pushState = function(state, title, url) {
+            return originalPushState.call(this, state, title, url ? proxyUrl(url) : url);
+          };
+
+          const originalReplaceState = history.replaceState;
+          history.replaceState = function(state, title, url) {
+            return originalReplaceState.call(this, state, title, url ? proxyUrl(url) : url);
+          };
+
+          // Intercept dynamic element creation
           const originalCreateElement = document.createElement;
           document.createElement = function(tagName, options) {
             const el = originalCreateElement.call(this, tagName, options);
-            const tag = tagName.toLowerCase();
-            if (['script', 'img', 'iframe', 'link', 'source', 'video', 'audio', 'embed', 'object', 'area'].includes(tag)) {
+            if (tagName.toLowerCase() === 'img' || tagName.toLowerCase() === 'script' || tagName.toLowerCase() === 'iframe') {
               const originalSetAttribute = el.setAttribute;
               el.setAttribute = function(name, value) {
-                const lowerName = name.toLowerCase();
-                if (['src', 'href', 'action', 'data', 'srcset'].includes(lowerName)) {
-                  if (lowerName === 'srcset') {
-                    value = value.split(',').map(part => {
-                      const trimmed = part.trim();
-                      if (!trimmed) return part;
-                      const parts = trimmed.split(/\\s+/);
-                      return proxyUrl(parts[0]) + (parts[1] ? ' ' + parts[1] : '');
-                    }).join(', ');
-                  } else {
-                    value = proxyUrl(value);
-                  }
+                if ((name === 'src' || name === 'href') && value) {
+                  value = proxyUrl(value);
                 }
                 return originalSetAttribute.call(this, name, value);
               };
-              
-              const props = {
-                'script': 'src', 'img': 'src', 'iframe': 'src', 'source': 'src', 'video': 'src', 'audio': 'src', 'embed': 'src',
-                'link': 'href', 'a': 'href', 'area': 'href',
-                'object': 'data'
-              };
-              if (props[tag]) {
-                const prop = props[tag];
-                Object.defineProperty(el, prop, {
-                  get: function() { return el.getAttribute(prop); },
-                  set: function(val) { el.setAttribute(prop, val); }
-                });
-              }
+              Object.defineProperty(el, 'src', {
+                get() { return el.getAttribute('src'); },
+                set(val) { el.setAttribute('src', val); }
+              });
             }
             return el;
           };
-
         })();
       </script>
     `);
@@ -347,9 +454,19 @@ async function startServer() {
     return $.html();
   }
 
+  // XOR encoded service route
+  app.get("/nexus/:encodedUrl", async (req, res) => {
+    const encodedUrl = req.params.encodedUrl;
+    const targetUrl = config.decodeUrl(encodedUrl);
+    
+    if (!targetUrl) return res.status(400).send("Invalid URL");
+
+    res.redirect(`/api/proxy?url=${encodeURIComponent(targetUrl)}`);
+  });
+
   // Enhanced Proxy Endpoint
-  app.all("/api/proxy*", async (req, res) => {
-    let targetUrl = (req.query.url || req.body.url) as string;
+  app.all("/api/proxy*", express.raw({ type: '*/*', limit: '10mb' }), async (req, res) => {
+    let targetUrl = (req.query.url || req.headers['x-nexus-target']) as string;
     
     // If URL is missing, try to infer it from the path or referer
     if (!targetUrl) {
@@ -642,7 +759,9 @@ async function startServer() {
   });
 
   server.on("upgrade", (req, socket, head) => {
-    if (bare.shouldRoute(req)) {
+    if (req.url?.startsWith("/wisp/")) {
+      wisp.routeRequest(req, socket, head);
+    } else if (bare.shouldRoute(req)) {
       bare.routeUpgrade(req, socket, head);
     } else {
       socket.end();
