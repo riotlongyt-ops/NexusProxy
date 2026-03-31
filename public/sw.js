@@ -1,7 +1,3 @@
-self.addEventListener('install', (event) => {
-  self.skipWaiting();
-});
-
 self.addEventListener('activate', (event) => {
   event.waitUntil(clients.claim());
 });
@@ -24,6 +20,26 @@ self.addEventListener('fetch', (event) => {
       body: event.request.method !== 'GET' && event.request.method !== 'HEAD' ? event.request.blob() : undefined,
       mode: 'cors',
       credentials: 'omit'
+    }).catch(async (error) => {
+      // If the fetch fails (e.g. offline), try to return the offline page
+      const cache = await caches.open('nexus-offline');
+      const cachedResponse = await cache.match('/offline.html');
+      if (cachedResponse) return cachedResponse;
+      
+      // If not in cache, try to fetch it directly (might still fail if offline)
+      return fetch('/offline.html').catch(() => {
+        return new Response('Offline', { status: 503, statusText: 'Service Unavailable' });
+      });
     })
   );
+});
+
+// Cache the offline page on install
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open('nexus-offline').then((cache) => {
+      return cache.addAll(['/offline.html']);
+    })
+  );
+  self.skipWaiting();
 });

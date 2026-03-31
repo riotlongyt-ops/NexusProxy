@@ -273,12 +273,14 @@ async function startServer() {
       const url = new URL(targetUrl);
       const cookieString = await jar.getCookieString(targetUrl);
 
+      const { host, origin, referer, ...otherHeaders } = req.headers;
+
       const response = await axios({
         method: req.method,
         url: targetUrl,
         data: req.method !== 'GET' ? req.body : undefined,
         headers: {
-          ...req.headers,
+          ...otherHeaders,
           host: url.host,
           cookie: cookieString,
           'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',

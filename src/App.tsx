@@ -136,12 +136,13 @@ export default function App() {
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
-        body { font-family: 'Inter', sans-serif; background: #050505; color: white; overflow: hidden; }
+        body { font-family: 'Inter', sans-serif; background: #050505; color: white; }
         .glass { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.05); }
         .input-focus:focus { border-color: rgba(59, 130, 246, 0.5); box-shadow: 0 0 20px rgba(59, 130, 246, 0.1); }
+        #browser { background: white; }
     </style>
 </head>
-<body class="h-screen flex flex-col">
+<body class="min-h-screen flex flex-col">
     <div class="h-16 bg-[#0a0a0a] border-b border-white/5 flex items-center px-6 gap-4 z-20">
         <div class="flex items-center gap-3 mr-4">
             <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-600/20">
@@ -236,7 +237,11 @@ export default function App() {
             }
             
             document.getElementById('welcome').style.display = 'none';
+            // Use the proxy for the initial page load
             document.getElementById('browser').src = PROXY_BASE + "?url=" + encodeURIComponent(url);
+            
+            // Update URL input to show the real URL
+            document.getElementById('urlInput').value = url;
         }
 
         window.addEventListener('message', (e) => {
@@ -399,9 +404,9 @@ export default function App() {
       </div>
 
       {/* Browser Content */}
-      <div className="flex-1 bg-[#121212] relative overflow-hidden flex justify-center items-start p-4">
+      <div className="flex-1 bg-[#121212] relative overflow-y-auto flex justify-center items-start p-4">
         {showHome ? (
-          <div className="w-full h-full flex flex-col items-center justify-center max-w-4xl mx-auto space-y-12">
+          <div className="w-full min-h-full flex flex-col items-center justify-center max-w-4xl mx-auto space-y-12 py-12">
             <motion.div 
               initial={{ opacity: 0, y: -20 }}
               animate={{ opacity: 1, y: 0 }}
