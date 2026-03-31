@@ -42,8 +42,64 @@ export default function App() {
   const [showHome, setShowHome] = useState(true);
   const [showStartMenu, setShowStartMenu] = useState(false);
   
+  const [shortcuts, setShortcuts] = useState<{ name: string; url: string }[]>(() => {
+    const saved = localStorage.getItem('nexus_shortcuts');
+    if (saved) return JSON.parse(saved);
+    return [
+      { name: 'Google', url: 'https://www.google.com' },
+      { name: 'YouTube', url: 'https://www.youtube.com' },
+      { name: 'DuckDuckGo', url: 'https://duckduckgo.com' },
+      { name: 'Crazy Games', url: 'https://www.crazygames.com' },
+      { name: 'Poki', url: 'https://poki.com' },
+      { name: 'Discord', url: 'https://discord.com' },
+      { name: 'Reddit', url: 'https://www.reddit.com' },
+      { name: 'GitHub', url: 'https://github.com' },
+    ];
+  });
+  const [showAddShortcut, setShowAddShortcut] = useState(false);
+  const [newShortcutName, setNewShortcutName] = useState('');
+  const [newShortcutUrl, setNewShortcutUrl] = useState('');
+
+  useEffect(() => {
+    localStorage.setItem('nexus_shortcuts', JSON.stringify(shortcuts));
+  }, [shortcuts]);
+
+  const addShortcut = () => {
+    if (newShortcutName && newShortcutUrl) {
+      let url = newShortcutUrl;
+      if (!url.startsWith('http')) url = 'https://' + url;
+      setShortcuts([...shortcuts, { name: newShortcutName, url }]);
+      setNewShortcutName('');
+      setNewShortcutUrl('');
+      setShowAddShortcut(false);
+    }
+  };
+
+  const removeShortcut = (e: React.MouseEvent, name: string) => {
+    e.stopPropagation();
+    setShortcuts(shortcuts.filter(s => s.name !== name));
+  };
+
   const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
   const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  const getDisplayUrl = (url: string) => {
+    if (url.includes('/api/proxy')) {
+      try {
+        const urlObj = new URL(url, window.location.origin);
+        const target = urlObj.searchParams.get('url');
+        if (target) return target;
+        
+        // If 'url' is missing but it's clearly a search (common after GET form submission)
+        if (urlObj.searchParams.has('q')) {
+          return `https://www.google.com/search${urlObj.search}`;
+        }
+      } catch (e) {
+        return url;
+      }
+    }
+    return url;
+  };
 
   // Listen for messages from the proxied iframe
   useEffect(() => {
@@ -136,15 +192,17 @@ export default function App() {
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
-        body { font-family: 'Inter', sans-serif; background: #050505; color: white; }
+        body { font-family: 'Inter', sans-serif; background: #050505; color: white; overflow-x: hidden; }
         .glass { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.05); }
         .input-focus:focus { border-color: rgba(59, 130, 246, 0.5); box-shadow: 0 0 20px rgba(59, 130, 246, 0.1); }
         #browser { background: white; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body class="min-h-screen flex flex-col">
     <div class="h-16 bg-[#0a0a0a] border-b border-white/5 flex items-center px-6 gap-4 z-20">
-        <div class="flex items-center gap-3 mr-4">
+        <div class="flex items-center gap-3 mr-4 cursor-pointer" onclick="goHome()">
             <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-600/20">
                 <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path></svg>
             </div>
@@ -159,6 +217,9 @@ export default function App() {
         </div>
 
         <div class="flex items-center gap-2 ml-auto">
+            <button onclick="goHome()" class="p-2 hover:bg-white/5 rounded-xl text-gray-400 transition-all">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+            </button>
             <button onclick="document.getElementById('welcome').style.display = 'flex'" class="p-2 hover:bg-white/5 rounded-xl text-gray-400 transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
             </button>
@@ -167,25 +228,36 @@ export default function App() {
     
     <div class="flex-1 relative">
         <iframe id="browser" class="w-full h-full border-none" src="about:blank"></iframe>
-        <div id="welcome" class="absolute inset-0 flex flex-col items-center justify-center bg-[#050505] z-10">
-            <div class="text-center space-y-8 max-w-xl p-12 glass rounded-[3rem] shadow-2xl">
-                <div class="w-24 h-24 bg-blue-600/20 rounded-[2rem] flex items-center justify-center mx-auto mb-4">
-                    <svg class="w-12 h-12 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path></svg>
-                </div>
-                <div class="space-y-2">
-                    <h1 class="text-6xl font-black text-white tracking-tighter">NEXUS <span class="text-blue-500">STANDALONE</span></h1>
+        
+        <div id="welcome" class="absolute inset-0 flex flex-col items-center justify-start py-20 bg-[#050505] z-10 overflow-y-auto no-scrollbar">
+            <div class="text-center space-y-12 w-full max-w-4xl px-6">
+                <div class="space-y-4">
+                    <div class="w-20 h-20 bg-blue-600/20 rounded-[2rem] flex items-center justify-center mx-auto mb-4">
+                        <svg class="w-10 h-10 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path></svg>
+                    </div>
+                    <h1 class="text-7xl font-black text-white tracking-tighter uppercase">Nexus <span class="text-blue-500">Standalone</span></h1>
                     <p class="text-gray-500 text-xl font-medium">The ultimate portable unblocker.</p>
                 </div>
-                
-                <div class="space-y-6 text-left">
-                    <div class="space-y-2">
+
+                <div id="shortcutGrid" class="grid grid-cols-2 sm:grid-cols-4 gap-4 w-full max-w-2xl mx-auto">
+                    <!-- Shortcuts injected here -->
+                </div>
+
+                <div class="flex justify-center">
+                    <button onclick="document.getElementById('addShortcutModal').style.display = 'flex'" class="flex flex-col items-center justify-center gap-3 p-4 bg-white/5 hover:bg-white/10 rounded-2xl border border-dashed border-white/20 transition-all group w-full max-w-[150px]">
+                        <div class="w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center group-hover:scale-110 transition-transform">
+                            <svg class="w-5 h-5 text-gray-400 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                        </div>
+                        <span class="text-xs font-semibold text-gray-400 group-hover:text-white">Add Shortcut</span>
+                    </button>
+                </div>
+
+                <div class="glass p-8 rounded-[2rem] space-y-6 max-w-md mx-auto">
+                    <div class="space-y-2 text-left">
                         <label class="text-[10px] font-bold text-gray-500 uppercase tracking-[0.2em] ml-1">Proxy Backend URL</label>
                         <input id="proxyInput" type="text" value="${window.location.origin}" class="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 text-sm focus:outline-none input-focus transition-all" placeholder="https://your-nexus-instance.run.app">
                     </div>
-                </div>
-
-                <div class="pt-4 flex flex-col gap-4">
-                    <button onclick="startBrowsing()" class="w-full py-5 bg-blue-600 hover:bg-blue-500 rounded-2xl text-xl font-black transition-all shadow-xl shadow-blue-600/20 uppercase tracking-widest">Launch Browser</button>
+                    <button onclick="startBrowsing()" class="w-full py-4 bg-blue-600 hover:bg-blue-500 rounded-2xl text-lg font-black transition-all shadow-xl shadow-blue-600/20 uppercase tracking-widest">Connect Proxy</button>
                     <div class="flex items-center justify-center gap-2">
                         <p class="text-[10px] text-gray-600 font-bold uppercase tracking-widest">Session ID:</p>
                         <span id="sessionDisplay" class="text-[10px] text-blue-500 font-mono font-bold">Checking...</span>
@@ -195,10 +267,83 @@ export default function App() {
         </div>
     </div>
 
+    <div id="addShortcutModal" class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" style="display: none;">
+        <div class="w-full max-w-md bg-[#1a1a1a] border border-white/10 rounded-[2rem] p-8 shadow-2xl space-y-6">
+            <div class="flex items-center justify-between">
+                <h2 class="text-2xl font-black tracking-tighter text-white uppercase">Add Shortcut</h2>
+                <button onclick="document.getElementById('addShortcutModal').style.display = 'none'" class="p-2 hover:bg-white/5 rounded-xl transition-all">
+                    <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="space-y-4">
+                <div class="space-y-2">
+                    <label class="text-[10px] font-bold text-gray-500 uppercase tracking-[0.2em] ml-1">Name</label>
+                    <input id="newShortcutName" type="text" placeholder="e.g. Google" class="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 text-sm focus:outline-none focus:border-blue-500 transition-all">
+                </div>
+                <div class="space-y-2">
+                    <label class="text-[10px] font-bold text-gray-500 uppercase tracking-[0.2em] ml-1">URL</label>
+                    <input id="newShortcutUrl" type="text" placeholder="e.g. google.com" class="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 text-sm focus:outline-none focus:border-blue-500 transition-all">
+                </div>
+            </div>
+            <button onclick="addShortcutOffline()" class="w-full py-4 bg-blue-600 hover:bg-blue-500 rounded-2xl text-lg font-black transition-all shadow-xl shadow-blue-600/20 uppercase tracking-widest">Add Shortcut</button>
+        </div>
+    </div>
+
     <script>
         let PROXY_BASE = "";
+        let shortcuts = JSON.parse(localStorage.getItem('nexus_shortcuts')) || [
+            { name: 'Google', url: 'https://www.google.com' },
+            { name: 'YouTube', url: 'https://www.youtube.com' },
+            { name: 'DuckDuckGo', url: 'https://duckduckgo.com' },
+            { name: 'Crazy Games', url: 'https://www.crazygames.com' },
+            { name: 'Poki', url: 'https://poki.com' },
+            { name: 'Discord', url: 'https://discord.com' },
+            { name: 'Reddit', url: 'https://www.reddit.com' },
+            { name: 'GitHub', url: 'https://github.com' }
+        ];
+
+        function renderShortcuts() {
+            const grid = document.getElementById('shortcutGrid');
+            grid.innerHTML = '';
+            shortcuts.forEach(site => {
+                const div = document.createElement('div');
+                div.className = 'relative group';
+                div.innerHTML = \`
+                    <button onclick="navigate('\${site.url}')" class="w-full flex flex-col items-center gap-3 p-4 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/5 transition-all">
+                        <img src="https://www.google.com/s2/favicons?domain=\${new URL(site.url).hostname}&sz=64" class="w-8 h-8 rounded-lg group-hover:scale-110 transition-transform" referrerPolicy="no-referrer">
+                        <span class="text-xs font-semibold text-gray-400 group-hover:text-white">\${site.name}</span>
+                    </button>
+                    <button onclick="removeShortcutOffline(event, '\${site.name}')" class="absolute top-2 right-2 p-1 bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white rounded-md opacity-0 group-hover:opacity-100 transition-all">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                \`;
+                grid.appendChild(div);
+            });
+        }
+
+        function addShortcutOffline() {
+            const name = document.getElementById('newShortcutName').value;
+            let url = document.getElementById('newShortcutUrl').value;
+            if (name && url) {
+                if (!url.startsWith('http')) url = 'https://' + url;
+                shortcuts.push({ name, url });
+                localStorage.setItem('nexus_shortcuts', JSON.stringify(shortcuts));
+                renderShortcuts();
+                document.getElementById('addShortcutModal').style.display = 'none';
+                document.getElementById('newShortcutName').value = '';
+                document.getElementById('newShortcutUrl').value = '';
+            }
+        }
+
+        function removeShortcutOffline(e, name) {
+            e.stopPropagation();
+            shortcuts = shortcuts.filter(s => s.name !== name);
+            localStorage.setItem('nexus_shortcuts', JSON.stringify(shortcuts));
+            renderShortcuts();
+        }
+
+        renderShortcuts();
         
-        // Initialize Session ID
         function getCookie(name) {
             const value = "; " + document.cookie;
             const parts = value.split("; " + name + "=");
@@ -221,8 +366,13 @@ export default function App() {
             document.getElementById('welcome').style.display = 'none';
         }
 
-        function navigate() {
-            const input = document.getElementById('urlInput').value;
+        function goHome() {
+            document.getElementById('welcome').style.display = 'flex';
+            document.getElementById('browser').src = 'about:blank';
+        }
+
+        function navigate(directUrl) {
+            const input = directUrl || document.getElementById('urlInput').value;
             if (!input) return;
             
             if (!PROXY_BASE) startBrowsing();
@@ -237,10 +387,7 @@ export default function App() {
             }
             
             document.getElementById('welcome').style.display = 'none';
-            // Use the proxy for the initial page load
             document.getElementById('browser').src = PROXY_BASE + "?url=" + encodeURIComponent(url);
-            
-            // Update URL input to show the real URL
             document.getElementById('urlInput').value = url;
         }
 
@@ -303,8 +450,8 @@ export default function App() {
   };
 
   useEffect(() => {
-    setUrlInput(activeTab.url);
-  }, [activeTabId]);
+    setUrlInput(getDisplayUrl(activeTab.url));
+  }, [activeTabId, activeTab.url]);
 
   useEffect(() => {
     // When proxy mode changes, reload the current tab with the new mode
@@ -450,33 +597,37 @@ export default function App() {
               transition={{ delay: 0.2 }}
               className="grid grid-cols-2 sm:grid-cols-4 gap-4 w-full max-w-2xl"
             >
-              {[
-                { name: 'Google', url: 'https://www.google.com', icon: 'https://www.google.com/favicon.ico' },
-                { name: 'YouTube', url: 'https://www.youtube.com', icon: 'https://www.youtube.com/favicon.ico' },
-                { name: 'Discord', url: 'https://discord.com', icon: 'https://discord.com/favicon.ico' },
-                { name: 'Reddit', url: 'https://www.reddit.com', icon: 'https://www.reddit.com/favicon.ico' },
-                { name: 'GitHub', url: 'https://github.com', icon: 'https://github.com/favicon.ico' },
-                { name: 'Twitch', url: 'https://www.twitch.tv', icon: 'https://www.twitch.tv/favicon.ico' },
-                { name: 'Twitter', url: 'https://twitter.com', icon: 'https://twitter.com/favicon.ico' },
-                { name: 'Instagram', url: 'https://www.instagram.com', icon: 'https://www.instagram.com/favicon.ico' },
-                { name: 'TikTok', url: 'https://www.tiktok.com', icon: 'https://www.tiktok.com/favicon.ico' },
-                { name: 'Spotify', url: 'https://www.spotify.com', icon: 'https://www.spotify.com/favicon.ico' },
-                { name: 'Netflix', url: 'https://www.netflix.com', icon: 'https://www.netflix.com/favicon.ico' },
-                { name: 'Amazon', url: 'https://www.amazon.com', icon: 'https://www.amazon.com/favicon.ico' },
-                { name: 'Hulu', url: 'https://www.hulu.com', icon: 'https://www.hulu.com/favicon.ico' },
-                { name: 'Disney+', url: 'https://www.disneyplus.com', icon: 'https://www.disneyplus.com/favicon.ico' },
-                { name: 'Pinterest', url: 'https://www.pinterest.com', icon: 'https://www.pinterest.com/favicon.ico' },
-                { name: 'LinkedIn', url: 'https://www.linkedin.com', icon: 'https://www.linkedin.com/favicon.ico' },
-              ].map((site) => (
-                <button
-                  key={site.name}
-                  onClick={() => navigateTo(site.url)}
-                  className="flex flex-col items-center gap-3 p-4 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/5 transition-all group"
-                >
-                  <img src={site.icon} alt={site.name} className="w-8 h-8 rounded-lg group-hover:scale-110 transition-transform" referrerPolicy="no-referrer" />
-                  <span className="text-xs font-semibold text-gray-400 group-hover:text-white">{site.name}</span>
-                </button>
+              {shortcuts.map((site) => (
+                <div key={site.name} className="relative group">
+                  <button
+                    onClick={() => navigateTo(site.url)}
+                    className="w-full flex flex-col items-center gap-3 p-4 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/5 transition-all"
+                  >
+                    <img 
+                      src={`https://www.google.com/s2/favicons?domain=${new URL(site.url).hostname}&sz=64`} 
+                      alt={site.name} 
+                      className="w-8 h-8 rounded-lg group-hover:scale-110 transition-transform" 
+                      referrerPolicy="no-referrer" 
+                    />
+                    <span className="text-xs font-semibold text-gray-400 group-hover:text-white">{site.name}</span>
+                  </button>
+                  <button 
+                    onClick={(e) => removeShortcut(e, site.name)}
+                    className="absolute top-2 right-2 p-1 bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white rounded-md opacity-0 group-hover:opacity-100 transition-all"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
               ))}
+              <button
+                onClick={() => setShowAddShortcut(true)}
+                className="flex flex-col items-center justify-center gap-3 p-4 bg-white/5 hover:bg-white/10 rounded-2xl border border-dashed border-white/20 transition-all group"
+              >
+                <div className="w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center group-hover:scale-110 transition-transform">
+                  <Plus className="w-5 h-5 text-gray-400 group-hover:text-white" />
+                </div>
+                <span className="text-xs font-semibold text-gray-400 group-hover:text-white">Add Shortcut</span>
+              </button>
             </motion.div>
 
             <div className="flex gap-4">
@@ -727,6 +878,57 @@ export default function App() {
               </div>
             </motion.div>
           </>
+        )}
+      </AnimatePresence>
+
+      {/* Settings Modal */}
+      <AnimatePresence>
+        {showAddShortcut && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="w-full max-w-md bg-[#1a1a1a] border border-white/10 rounded-[2rem] p-8 shadow-2xl space-y-6"
+            >
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-black tracking-tighter text-white">ADD SHORTCUT</h2>
+                <button onClick={() => setShowAddShortcut(false)} className="p-2 hover:bg-white/5 rounded-xl transition-all">
+                  <X className="w-5 h-5 text-gray-400" />
+                </button>
+              </div>
+              
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.2em] ml-1">Name</label>
+                  <input 
+                    type="text" 
+                    value={newShortcutName}
+                    onChange={(e) => setNewShortcutName(e.target.value)}
+                    placeholder="e.g. Google"
+                    className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 text-sm focus:outline-none focus:border-blue-500 transition-all"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.2em] ml-1">URL</label>
+                  <input 
+                    type="text" 
+                    value={newShortcutUrl}
+                    onChange={(e) => setNewShortcutUrl(e.target.value)}
+                    placeholder="e.g. google.com"
+                    className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 text-sm focus:outline-none focus:border-blue-500 transition-all"
+                  />
+                </div>
+              </div>
+
+              <button 
+                onClick={addShortcut}
+                className="w-full py-4 bg-blue-600 hover:bg-blue-500 rounded-2xl text-lg font-black transition-all shadow-xl shadow-blue-600/20 uppercase tracking-widest"
+              >
+                Add Shortcut
+              </button>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 

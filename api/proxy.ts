@@ -2,6 +2,11 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { CookieJar } from 'tough-cookie';
+import http from 'http';
+import https from 'https';
+
+const httpAgent = new http.Agent({ keepAlive: true, timeout: 60000 });
+const httpsAgent = new https.Agent({ keepAlive: true, timeout: 60000, rejectUnauthorized: false });
 
 // Vercel functions are stateless, so we'd ideally use a database for cookies,
 // but for this demo we'll use a simple in-memory jar (limited to the current instance)
@@ -144,23 +149,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const url = new URL(targetUrl);
     const cookieString = await jar.getCookieString(targetUrl);
 
-    const response = await axios({
-      method: req.method,
-      url: targetUrl,
-      data: req.method !== 'GET' ? req.body : undefined,
-      headers: {
-        ...req.headers,
-        host: url.host,
-        cookie: cookieString,
-        'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0',
-        referer: url.origin,
-        origin: url.origin,
-        'accept-encoding': 'identity',
-      },
-      responseType: 'arraybuffer',
-      maxRedirects: 0,
-      validateStatus: () => true,
-    });
+    const makeRequest = async (retries = 2): Promise<any> => {
+      try {
+        return await axios({
+          method: req.method,
+          url: targetUrl,
+          data: req.method !== 'GET' ? req.body : undefined,
+          headers: {
+            ...req.headers,
+            host: url.host,
+            cookie: cookieString,
+            'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0',
+            referer: url.origin,
+            origin: url.origin,
+            'accept-encoding': 'identity',
+          },
+          responseType: 'arraybuffer',
+          maxRedirects: 0,
+          validateStatus: () => true,
+          timeout: 30000,
+          httpAgent,
+          httpsAgent,
+        });
+      } catch (err: any) {
+        const isNetworkError = ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENOTFOUND'].includes(err.code) || err.message?.includes('socket hang up');
+        if (retries > 0 && isNetworkError) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          return makeRequest(retries - 1);
+        }
+        throw err;
+      }
+    };
+
+    const response = await makeRequest();
 
     if (response.status >= 300 && response.status < 400 && response.headers.location) {
       const redirectUrl = new URL(response.headers.location, targetUrl).href;

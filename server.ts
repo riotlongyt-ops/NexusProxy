@@ -4,6 +4,7 @@ import path from "path";
 import axios from "axios";
 import cors from "cors";
 import http from "http";
+import https from "https";
 import cookieParser from "cookie-parser";
 import { CookieJar } from "tough-cookie";
 import { createBareServer } from "@tomphttp/bare-server-node";
@@ -17,6 +18,9 @@ async function startServer() {
   const app = express();
   const bare = createBareServer("/bare/");
   const PORT = 3000;
+
+  const httpAgent = new http.Agent({ keepAlive: true, timeout: 60000 });
+  const httpsAgent = new https.Agent({ keepAlive: true, timeout: 60000, rejectUnauthorized: false });
 
   app.use(cors({
     origin: true,
@@ -179,6 +183,16 @@ async function startServer() {
           Object.defineProperty(window, 'parent', { get: () => window });
           Object.defineProperty(document, 'referrer', { get: () => origin });
 
+          // Spoof location properties where possible
+          const targetLocation = new URL(currentTargetUrl);
+          try {
+            // We can't redefine window.location, but we can try to spoof some properties on document
+            Object.defineProperty(document, 'domain', { 
+              get: () => targetLocation.hostname,
+              set: (v) => v 
+            });
+          } catch (e) {}
+
           // Intercept document.cookie
           const cookieDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') || 
                                  Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
@@ -205,8 +219,35 @@ async function startServer() {
           window.addEventListener('submit', (e) => {
             const form = e.target;
             const action = form.getAttribute('action');
+            const method = (form.getAttribute('method') || 'GET').toUpperCase();
+            
             if (action && !action.includes(proxyBase)) {
-              form.action = proxyUrl(action);
+              const proxiedAction = proxyUrl(action);
+              if (method === 'GET') {
+                // For GET forms, the browser replaces the query string.
+                // We need to extract the 'url' parameter from the proxied action
+                // and add it as a hidden input so it's preserved.
+                try {
+                  const urlObj = new URL(proxiedAction, window.location.href);
+                  const targetUrl = urlObj.searchParams.get('url');
+                  if (targetUrl) {
+                    // Remove existing hidden 'url' if any
+                    const existing = form.querySelector('input[name="url"]');
+                    if (existing) existing.remove();
+                    
+                    const hidden = document.createElement('input');
+                    hidden.type = 'hidden';
+                    hidden.name = 'url';
+                    hidden.value = targetUrl;
+                    form.appendChild(hidden);
+                    
+                    // Set action to just the proxy base so we don't get double 'url' params
+                    form.action = proxyBase;
+                    return;
+                  }
+                } catch (e) {}
+              }
+              form.action = proxiedAction;
             }
           }, true);
 
@@ -264,24 +305,31 @@ async function startServer() {
     if (!targetUrl) {
       const fullPath = req.originalUrl.split('?')[0];
       const relativePath = fullPath.replace('/api/proxy', '');
-      
-      if (relativePath && relativePath !== '/' && relativePath !== '') {
-        const referer = req.headers.referer;
-        if (referer && referer.includes('/api/proxy?url=')) {
-          try {
-            const refererUrl = new URL(referer);
-            const baseTargetUrl = refererUrl.searchParams.get('url');
-            if (baseTargetUrl) {
-              const query = req.originalUrl.split('?')[1];
-              const inferredUrl = new URL(relativePath + (query ? '?' + query : ''), baseTargetUrl).href;
-              return res.redirect(`/api/proxy?url=${encodeURIComponent(inferredUrl)}`);
+      const referer = req.headers.referer;
+
+      if (referer && referer.includes('/api/proxy')) {
+        try {
+          const refererUrl = new URL(referer);
+          let baseTargetUrl = refererUrl.searchParams.get('url');
+          if (baseTargetUrl) {
+            const query = req.originalUrl.split('?')[1];
+            // If the path is just the proxy endpoint, it means the 'url' param was lost
+            // during a GET form submission. We should use the baseTargetUrl as the base.
+            let targetPath = relativePath;
+            if (relativePath === '/api/proxy' || relativePath === '/api/proxy/' || !relativePath) {
+              targetPath = ''; 
             }
-          } catch (e) {
-            // Ignore
+            targetUrl = new URL(targetPath + (query ? '?' + query : ''), baseTargetUrl).href;
+            // If we inferred it, we don't need to redirect, just continue with the inferred targetUrl
           }
+        } catch (e) {
+          // Ignore
         }
       }
-      return res.status(400).send("URL is required");
+      
+      if (!targetUrl) {
+        return res.status(400).send("URL is required");
+      }
     }
 
     const sessionId = req.cookies['SessionID'];
@@ -302,23 +350,41 @@ async function startServer() {
 
       const { host, origin, referer, ...otherHeaders } = req.headers;
 
-      const response = await axios({
-        method: req.method,
-        url: targetUrl,
-        data: req.method !== 'GET' ? req.body : undefined,
-        headers: {
-          ...otherHeaders,
-          host: url.host,
-          cookie: cookieString,
-          'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-          referer: url.origin,
-          origin: url.origin,
-          'accept-encoding': 'identity',
-        },
-        responseType: 'arraybuffer',
-        maxRedirects: 0, // Handle redirects manually
-        validateStatus: () => true,
-      });
+      // Simple retry logic for network errors
+      const makeRequest = async (retries = 2): Promise<any> => {
+        try {
+          return await axios({
+            method: req.method,
+            url: targetUrl,
+            data: req.method !== 'GET' ? req.body : undefined,
+            headers: {
+              ...otherHeaders,
+              host: url.host,
+              cookie: cookieString,
+              'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+              referer: url.origin,
+              origin: url.origin,
+              'accept-encoding': 'identity',
+            },
+            responseType: 'arraybuffer',
+            maxRedirects: 0, // Handle redirects manually
+            validateStatus: () => true,
+            timeout: 30000, // 30 seconds timeout
+            httpAgent,
+            httpsAgent,
+          });
+        } catch (err: any) {
+          const isNetworkError = ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENOTFOUND'].includes(err.code) || err.message?.includes('socket hang up');
+          if (retries > 0 && isNetworkError) {
+            console.log(`Retrying request to ${targetUrl} due to ${err.code || err.message}. Retries left: ${retries}`);
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s before retry
+            return makeRequest(retries - 1);
+          }
+          throw err;
+        }
+      };
+
+      const response = await makeRequest();
 
       // Handle Redirects
       if (response.status >= 300 && response.status < 400 && response.headers.location) {
