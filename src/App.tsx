@@ -404,9 +404,9 @@ export default function App() {
       </div>
 
       {/* Browser Content */}
-      <div className="flex-1 bg-[#121212] relative overflow-y-auto flex justify-center items-start p-4">
+      <div className="flex-1 bg-[#121212] relative overflow-y-auto p-4">
         {showHome ? (
-          <div className="w-full min-h-full flex flex-col items-center justify-center max-w-4xl mx-auto space-y-12 py-12">
+          <div className="w-full min-h-full flex flex-col items-center justify-start max-w-4xl mx-auto space-y-12 py-12">
             <motion.div 
               initial={{ opacity: 0, y: -20 }}
               animate={{ opacity: 1, y: 0 }}

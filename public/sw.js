@@ -19,7 +19,7 @@ self.addEventListener('fetch', (event) => {
       headers: event.request.headers,
       body: event.request.method !== 'GET' && event.request.method !== 'HEAD' ? event.request.blob() : undefined,
       mode: 'cors',
-      credentials: 'omit'
+      credentials: 'include'
     }).catch(async (error) => {
       // If the fetch fails (e.g. offline), try to return the offline page
       const cache = await caches.open('nexus-offline');

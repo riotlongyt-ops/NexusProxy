@@ -133,7 +133,7 @@ async function startServer() {
             if (!url || typeof url !== 'string') return url;
             if (url.startsWith('data:') || url.startsWith('javascript:') || url.startsWith('blob:') || url.includes(proxyBase)) return url;
             try {
-              const absolute = new URL(url, window.location.href).href;
+              const absolute = new URL(url, currentTargetUrl).href;
               return proxyBase + "?url=" + encodeURIComponent(absolute);
             } catch (e) {
               return url;
@@ -257,9 +257,30 @@ async function startServer() {
   }
 
   // Enhanced Proxy Endpoint
-  app.all("/api/proxy", async (req, res) => {
-    const targetUrl = (req.query.url || req.body.url) as string;
+  app.all("/api/proxy*", async (req, res) => {
+    let targetUrl = (req.query.url || req.body.url) as string;
+    
+    // If URL is missing, try to infer it from the path or referer
     if (!targetUrl) {
+      const fullPath = req.originalUrl.split('?')[0];
+      const relativePath = fullPath.replace('/api/proxy', '');
+      
+      if (relativePath && relativePath !== '/' && relativePath !== '') {
+        const referer = req.headers.referer;
+        if (referer && referer.includes('/api/proxy?url=')) {
+          try {
+            const refererUrl = new URL(referer);
+            const baseTargetUrl = refererUrl.searchParams.get('url');
+            if (baseTargetUrl) {
+              const query = req.originalUrl.split('?')[1];
+              const inferredUrl = new URL(relativePath + (query ? '?' + query : ''), baseTargetUrl).href;
+              return res.redirect(`/api/proxy?url=${encodeURIComponent(inferredUrl)}`);
+            }
+          } catch (e) {
+            // Ignore
+          }
+        }
+      }
       return res.status(400).send("URL is required");
     }
 
@@ -268,6 +289,12 @@ async function startServer() {
       cookieJars[sessionId] = new CookieJar();
     }
     const jar = cookieJars[sessionId];
+
+    try {
+      new URL(targetUrl);
+    } catch (e) {
+      return res.status(400).send("Invalid URL: " + targetUrl);
+    }
 
     try {
       const url = new URL(targetUrl);
@@ -296,8 +323,11 @@ async function startServer() {
       // Handle Redirects
       if (response.status >= 300 && response.status < 400 && response.headers.location) {
         const redirectUrl = new URL(response.headers.location, targetUrl).href;
-        // Ensure the redirect itself is proxied
-        return res.redirect(`/api/proxy?url=${encodeURIComponent(redirectUrl)}`);
+        const proxiedRedirect = `/api/proxy?url=${encodeURIComponent(redirectUrl)}`;
+        
+        // Forward the exact redirect status code
+        res.set('Location', proxiedRedirect);
+        return res.status(response.status).send();
       }
 
       // Handle Set-Cookie from the target response
