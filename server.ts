@@ -14,6 +14,10 @@ import { v4 as uuidv4 } from "uuid";
 // In-memory cookie jars indexed by session ID
 const cookieJars: Record<string, CookieJar> = {};
 
+// Simple in-memory cache for proxy requests
+const proxyCache = new Map<string, { data: Buffer, headers: any, status: number, timestamp: number }>();
+const CACHE_TTL = 1000 * 60 * 5; // 5 minutes
+
 async function startServer() {
   const app = express();
   const bare = createBareServer("/bare/");
@@ -131,7 +135,8 @@ async function startServer() {
         (function() {
           const proxyBase = "${proxyUrlBase}";
           const currentTargetUrl = "${baseUrl}";
-          const origin = new URL(currentTargetUrl).origin;
+          const targetOrigin = new URL(currentTargetUrl).origin;
+          const targetHostname = new URL(currentTargetUrl).hostname;
           
           function proxyUrl(url) {
             if (!url || typeof url !== 'string') return url;
@@ -162,6 +167,58 @@ async function startServer() {
             return originalOpen.call(this, method, proxyUrl(url), ...args);
           };
 
+          // Intercept Web Workers
+          const originalWorker = window.Worker;
+          window.Worker = function(url, options) {
+            return new originalWorker(proxyUrl(url), options);
+          };
+
+          // Intercept navigator.sendBeacon
+          const originalSendBeacon = navigator.sendBeacon;
+          navigator.sendBeacon = function(url, data) {
+            return originalSendBeacon.call(navigator, proxyUrl(url), data);
+          };
+
+          // Intercept EventSource
+          const originalEventSource = window.EventSource;
+          window.EventSource = function(url, config) {
+            return new originalEventSource(proxyUrl(url), config);
+          };
+
+          // Intercept WebSocket (Basic wrapper)
+          const originalWebSocket = window.WebSocket;
+          window.WebSocket = function(url, protocols) {
+            // Note: Bare server handles WS better, but this is a fallback
+            if (typeof url === 'string' && !url.includes(proxyBase)) {
+               // We don't have a WS proxy endpoint here, but we could add one
+            }
+            return new originalWebSocket(url, protocols);
+          };
+
+          // Intercept localStorage and sessionStorage
+          const storagePrefix = "__nexus_" + targetHostname + "_";
+          const wrapStorage = (storage) => {
+            const originalGetItem = storage.getItem;
+            const originalSetItem = storage.setItem;
+            const originalRemoveItem = storage.removeItem;
+            const originalKey = storage.key;
+            const originalClear = storage.clear;
+
+            storage.getItem = function(key) { return originalGetItem.call(storage, storagePrefix + key); };
+            storage.setItem = function(key, val) { return originalSetItem.call(storage, storagePrefix + key, val); };
+            storage.removeItem = function(key) { return originalRemoveItem.call(storage, storagePrefix + key); };
+            storage.clear = function() {
+              const keys = [];
+              for (let i = 0; i < storage.length; i++) {
+                const k = originalKey.call(storage, i);
+                if (k && k.startsWith(storagePrefix)) keys.push(k);
+              }
+              keys.forEach(k => originalRemoveItem.call(storage, k));
+            };
+          };
+          wrapStorage(window.localStorage);
+          wrapStorage(window.sessionStorage);
+
           // Intercept window.open
           const originalOpenWindow = window.open;
           window.open = function(url, target, features) {
@@ -181,27 +238,16 @@ async function startServer() {
           // Frame busting protection
           Object.defineProperty(window, 'top', { get: () => window });
           Object.defineProperty(window, 'parent', { get: () => window });
-          Object.defineProperty(document, 'referrer', { get: () => origin });
+          Object.defineProperty(document, 'referrer', { get: () => targetOrigin });
 
           // Spoof location properties where possible
           const targetLocation = new URL(currentTargetUrl);
           try {
-            // We can't redefine window.location, but we can try to spoof some properties on document
             Object.defineProperty(document, 'domain', { 
               get: () => targetLocation.hostname,
               set: (v) => v 
             });
           } catch (e) {}
-
-          // Intercept document.cookie
-          const cookieDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') || 
-                                 Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
-          if (cookieDescriptor && cookieDescriptor.configurable) {
-            Object.defineProperty(document, 'cookie', {
-              get: function() { return cookieDescriptor.get.call(document); },
-              set: function(val) { return cookieDescriptor.set.call(document, val); }
-            });
-          }
 
           // Intercept clicks
           window.addEventListener('click', (e) => {
@@ -224,14 +270,10 @@ async function startServer() {
             if (action && !action.includes(proxyBase)) {
               const proxiedAction = proxyUrl(action);
               if (method === 'GET') {
-                // For GET forms, the browser replaces the query string.
-                // We need to extract the 'url' parameter from the proxied action
-                // and add it as a hidden input so it's preserved.
                 try {
                   const urlObj = new URL(proxiedAction, window.location.href);
                   const targetUrl = urlObj.searchParams.get('url');
                   if (targetUrl) {
-                    // Remove existing hidden 'url' if any
                     const existing = form.querySelector('input[name="url"]');
                     if (existing) existing.remove();
                     
@@ -240,8 +282,6 @@ async function startServer() {
                     hidden.name = 'url';
                     hidden.value = targetUrl;
                     form.appendChild(hidden);
-                    
-                    // Set action to just the proxy base so we don't get double 'url' params
                     form.action = proxyBase;
                     return;
                   }
@@ -265,25 +305,35 @@ async function startServer() {
           document.createElement = function(tagName, options) {
             const el = originalCreateElement.call(this, tagName, options);
             const tag = tagName.toLowerCase();
-            if (['script', 'img', 'iframe', 'link', 'source', 'video', 'audio'].includes(tag)) {
+            if (['script', 'img', 'iframe', 'link', 'source', 'video', 'audio', 'embed', 'object', 'area'].includes(tag)) {
               const originalSetAttribute = el.setAttribute;
               el.setAttribute = function(name, value) {
-                if (['src', 'href', 'action', 'data'].includes(name.toLowerCase())) {
-                  value = proxyUrl(value);
+                const lowerName = name.toLowerCase();
+                if (['src', 'href', 'action', 'data', 'srcset'].includes(lowerName)) {
+                  if (lowerName === 'srcset') {
+                    value = value.split(',').map(part => {
+                      const trimmed = part.trim();
+                      if (!trimmed) return part;
+                      const parts = trimmed.split(/\\s+/);
+                      return proxyUrl(parts[0]) + (parts[1] ? ' ' + parts[1] : '');
+                    }).join(', ');
+                  } else {
+                    value = proxyUrl(value);
+                  }
                 }
                 return originalSetAttribute.call(this, name, value);
               };
               
-              if (tag === 'script' || tag === 'img' || tag === 'iframe') {
-                Object.defineProperty(el, 'src', {
-                  get: function() { return el.getAttribute('src'); },
-                  set: function(val) { el.setAttribute('src', val); }
-                });
-              }
-              if (tag === 'link' || tag === 'a') {
-                Object.defineProperty(el, 'href', {
-                  get: function() { return el.getAttribute('href'); },
-                  set: function(val) { el.setAttribute('href', val); }
+              const props = {
+                'script': 'src', 'img': 'src', 'iframe': 'src', 'source': 'src', 'video': 'src', 'audio': 'src', 'embed': 'src',
+                'link': 'href', 'a': 'href', 'area': 'href',
+                'object': 'data'
+              };
+              if (props[tag]) {
+                const prop = props[tag];
+                Object.defineProperty(el, prop, {
+                  get: function() { return el.getAttribute(prop); },
+                  set: function(val) { el.setAttribute(prop, val); }
                 });
               }
             }
@@ -346,6 +396,19 @@ async function startServer() {
 
     try {
       const url = new URL(targetUrl);
+      const cacheKey = `${req.method}:${targetUrl}:${sessionId}`;
+      
+      // Check cache for GET requests
+      if (req.method === 'GET') {
+        const cached = proxyCache.get(cacheKey);
+        if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+          Object.entries(cached.headers).forEach(([key, value]) => {
+            res.set(key, value as string);
+          });
+          return res.status(cached.status).send(cached.data);
+        }
+      }
+
       const cookieString = await jar.getCookieString(targetUrl);
 
       const { host, origin, referer, ...otherHeaders } = req.headers;
@@ -461,6 +524,31 @@ async function startServer() {
           }
         });
         data = Buffer.from(css, 'utf-8');
+      } else if (contentType.includes('javascript') || contentType.includes('application/x-javascript')) {
+        let js = data.toString('utf-8');
+        // Simple JS rewrite for absolute imports/exports and some common patterns
+        // This is a bit aggressive but helps with ES6 modules
+        js = js.replace(/(import|export)\s+.*?\s+from\s+['"]([^'"]+)['"]/g, (match, type, url) => {
+          if (url.startsWith('http') || url.startsWith('//')) {
+            try {
+              const absolute = new URL(url, targetUrl).href;
+              return match.replace(url, `/api/proxy?url=${encodeURIComponent(absolute)}`);
+            } catch (e) {
+              return match;
+            }
+          }
+          return match;
+        });
+        // Handle dynamic imports
+        js = js.replace(/import\(['"]([^'"]+)['"]\)/g, (match, url) => {
+          try {
+            const absolute = new URL(url, targetUrl).href;
+            return `import("/api/proxy?url=${encodeURIComponent(absolute)}")`;
+          } catch (e) {
+            return match;
+          }
+        });
+        data = Buffer.from(js, 'utf-8');
       } else if (response.status >= 400 && !contentType.includes('javascript') && !contentType.includes('css')) {
         const isScriptRequest = targetUrl.endsWith('.js') || req.headers.accept?.includes('javascript');
         if (isScriptRequest) {
@@ -470,6 +558,30 @@ async function startServer() {
       }
 
       res.status(response.status).send(data);
+
+      // Cache successful GET responses
+      if (req.method === 'GET' && response.status === 200) {
+        const cacheHeaders: Record<string, string> = {};
+        Object.entries(response.headers).forEach(([key, value]) => {
+          if (!forbiddenHeaders.includes(key.toLowerCase())) {
+            cacheHeaders[key] = value as string;
+          }
+        });
+        proxyCache.set(cacheKey, {
+          data,
+          headers: cacheHeaders,
+          status: response.status,
+          timestamp: Date.now()
+        });
+        
+        // Cleanup old cache entries occasionally
+        if (proxyCache.size > 1000) {
+          const now = Date.now();
+          for (const [key, val] of proxyCache.entries()) {
+            if (now - val.timestamp > CACHE_TTL) proxyCache.delete(key);
+          }
+        }
+      }
     } catch (error: any) {
       console.error("Proxy Error:", error.message);
       res.status(500).send(`

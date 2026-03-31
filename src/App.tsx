@@ -33,14 +33,10 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [viewMode, setViewMode] = useState<'desktop' | 'mobile'>('desktop');
   const [useProxy, setUseProxy] = useState(true); // Default to true
-  const [vercelMode, setVercelMode] = useState(() => {
-    return window.location.hostname.includes('vercel.app') || localStorage.getItem('nexus_vercel_mode') === 'true';
-  });
   const [showSettings, setShowSettings] = useState(false);
   const [bareServerUrl, setBareServerUrl] = useState(`${window.location.origin}/bare/`);
   const [bareStatus, setBareStatus] = useState<'online' | 'offline' | 'checking'>('checking');
   const [cookies, setCookies] = useState<any[]>([]);
-  const [isCookiePage, setIsCookiePage] = useState(false);
   
   const [showHome, setShowHome] = useState(true);
   const [showStartMenu, setShowStartMenu] = useState(false);
@@ -122,15 +118,7 @@ export default function App() {
   }, [activeTabId]);
 
   useEffect(() => {
-    localStorage.setItem('nexus_vercel_mode', vercelMode.toString());
-  }, [vercelMode]);
-
-  useEffect(() => {
     const checkBare = async () => {
-      if (vercelMode) {
-        setBareStatus('offline');
-        return;
-      }
       try {
         // Bare server root usually responds to TompHTTP requests, 
         // but we can check if the endpoint is reachable.
@@ -161,14 +149,12 @@ export default function App() {
     if (!url) return;
     setShowHome(false);
     if (url.toLowerCase() === 'nexus://cookies') {
-      setIsCookiePage(true);
       fetchCookies();
       setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, url: 'nexus://cookies', title: 'Cookie Manager' } : t));
       setUrlInput('nexus://cookies');
       return;
     }
 
-    setIsCookiePage(false);
     let finalUrl = url;
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       if (url.includes('.') && !url.includes(' ')) {
@@ -211,7 +197,7 @@ export default function App() {
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
-<body class="min-h-screen flex flex-col">
+<body class="h-screen flex flex-col overflow-hidden">
     <div class="h-16 bg-[#0a0a0a] border-b border-white/5 flex items-center px-6 gap-4 z-20">
         <div class="flex items-center gap-3 mr-4 cursor-pointer" onclick="goHome()">
             <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-600/20">
@@ -237,8 +223,8 @@ export default function App() {
         </div>
     </div>
     
-    <div class="flex-1 relative">
-        <iframe id="browser" class="w-full h-full border-none" src="about:blank"></iframe>
+    <div class="flex-1 relative overflow-hidden">
+        <iframe id="browser" class="w-full h-full border-none" src="about:blank" allowfullscreen allow="fullscreen; geolocation; microphone; camera; midi; encrypted-media; clipboard-read; clipboard-write"></iframe>
         
         <div id="welcome" class="absolute inset-0 flex flex-col items-center justify-start py-20 bg-[#050505] z-10 overflow-y-auto no-scrollbar">
             <div class="text-center space-y-12 w-full max-w-4xl px-6">
@@ -518,7 +504,7 @@ export default function App() {
           <button onClick={refresh} className="p-2 rounded-full hover:bg-white/10">
             <RotateCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
-          <button onClick={() => { setShowHome(true); setIsCookiePage(false); setUrlInput(''); }} className="p-2 rounded-full hover:bg-white/10">
+          <button onClick={() => { setShowHome(true); setUrlInput(''); }} className="p-2 rounded-full hover:bg-white/10">
             <Home className="w-4 h-4" />
           </button>
         </div>
@@ -678,68 +664,21 @@ export default function App() {
               ${viewMode === 'desktop' ? 'w-full h-full' : 'w-[375px] h-[667px] mt-8'}
             `}
           >
-            {isCookiePage ? (
-              <div className="w-full h-full bg-[#1a1a1a] p-8 overflow-auto text-white font-mono">
-              <div className="flex items-center justify-between mb-8">
-                <h1 className="text-2xl font-bold flex items-center gap-3">
-                  <History className="w-8 h-8 text-purple-400" />
-                  Cookie Manager
-                </h1>
-                <button 
-                  onClick={fetchCookies}
-                  className="px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm transition-colors"
-                >
-                  Refresh Cookies
-                </button>
+            {activeTab.url ? (
+              <iframe
+                ref={iframeRef}
+                src={activeTab.url}
+                className="w-full h-full border-none"
+                onLoad={() => setIsLoading(false)}
+                title="Browser View"
+                sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts allow-top-navigation-by-user-activation"
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center bg-[#1a1a1a]">
+                <RotateCw className="w-8 h-8 animate-spin text-blue-500" />
               </div>
-
-              <div className="space-y-4">
-                {cookies.length === 0 ? (
-                  <div className="text-center py-20 opacity-30">
-                    <History className="w-16 h-16 mx-auto mb-4" />
-                    <p>No cookies found for this session.</p>
-                  </div>
-                ) : (
-                  <div className="border border-white/10 rounded-xl overflow-hidden">
-                    <table className="w-full text-left text-sm">
-                      <thead className="bg-white/5 text-gray-400 uppercase text-[10px] tracking-widest">
-                        <tr>
-                          <th className="px-4 py-3">Key</th>
-                          <th className="px-4 py-3">Value</th>
-                          <th className="px-4 py-3">Domain</th>
-                          <th className="px-4 py-3">Path</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/5">
-                        {cookies.map((cookie, i) => (
-                          <tr key={i} className="hover:bg-white/5 transition-colors">
-                            <td className="px-4 py-3 text-purple-400 font-bold">{cookie.key}</td>
-                            <td className="px-4 py-3 opacity-80 break-all">{cookie.value}</td>
-                            <td className="px-4 py-3 opacity-60">{cookie.domain}</td>
-                            <td className="px-4 py-3 opacity-60">{cookie.path}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : activeTab.url ? (
-            <iframe
-              ref={iframeRef}
-              src={activeTab.url}
-              className="w-full h-full border-none"
-              onLoad={() => setIsLoading(false)}
-              title="Browser View"
-              sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts allow-top-navigation-by-user-activation"
-            />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center bg-[#1a1a1a]">
-              <RotateCw className="w-8 h-8 animate-spin text-blue-500" />
-            </div>
-          )}
-        </div>
+            )}
+          </div>
       )}
 
       {/* Info Overlay for CORS issues */}
@@ -785,12 +724,10 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-4 text-gray-500 text-[10px] font-bold uppercase tracking-widest">
-          {!vercelMode && (
-            <div className="flex items-center gap-2">
-              <div className={`w-1.5 h-1.5 rounded-full ${bareStatus === 'online' ? 'bg-green-500' : 'bg-red-500'}`} />
-              {bareStatus}
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <div className={`w-1.5 h-1.5 rounded-full ${bareStatus === 'online' ? 'bg-green-500' : 'bg-red-500'}`} />
+            {bareStatus}
+          </div>
           <div>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
         </div>
       </div>
@@ -974,54 +911,33 @@ export default function App() {
               </div>
 
               <div className="p-6 space-y-6">
-                <div className="flex items-center justify-between p-3 bg-blue-500/10 rounded-xl border border-blue-500/20">
-                  <div className="flex items-center gap-3">
-                    <Globe className="w-5 h-5 text-blue-400" />
-                    <div>
-                      <div className="text-sm font-bold">Vercel Mode</div>
-                      <div className="text-[10px] text-gray-400">Optimizes for serverless environments</div>
-                    </div>
-                  </div>
-                  <button 
-                    onClick={() => setVercelMode(!vercelMode)}
-                    className={`w-10 h-5 rounded-full relative transition-colors ${vercelMode ? 'bg-blue-500' : 'bg-gray-600'}`}
-                  >
-                    <motion.div 
-                      animate={{ x: vercelMode ? 22 : 2 }}
-                      className="absolute top-1 w-3 h-3 bg-white rounded-full shadow-sm"
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-gray-400 uppercase tracking-wider flex justify-between">
+                    Bare Server Location
+                    <span className={`flex items-center gap-1 normal-case font-normal ${bareStatus === 'online' ? 'text-green-400' : bareStatus === 'offline' ? 'text-red-400' : 'text-yellow-400'}`}>
+                      <div className={`w-1.5 h-1.5 rounded-full ${bareStatus === 'online' ? 'bg-green-400 animate-pulse' : bareStatus === 'offline' ? 'bg-red-400' : 'bg-yellow-400 animate-pulse'}`} />
+                      {bareStatus === 'online' ? 'Server Online' : bareStatus === 'offline' ? 'Server Offline' : 'Checking...'}
+                    </span>
+                  </label>
+                  <div className="flex gap-2">
+                    <input 
+                      type="text"
+                      value={bareServerUrl}
+                      onChange={(e) => setBareServerUrl(e.target.value)}
+                      className="flex-1 bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500/50"
+                      placeholder="https://your-bare-server.com/bare/"
                     />
-                  </button>
-                </div>
-
-                {!vercelMode && (
-                  <div className="space-y-2">
-                    <label className="text-xs font-medium text-gray-400 uppercase tracking-wider flex justify-between">
-                      Bare Server Location
-                      <span className={`flex items-center gap-1 normal-case font-normal ${bareStatus === 'online' ? 'text-green-400' : bareStatus === 'offline' ? 'text-red-400' : 'text-yellow-400'}`}>
-                        <div className={`w-1.5 h-1.5 rounded-full ${bareStatus === 'online' ? 'bg-green-400 animate-pulse' : bareStatus === 'offline' ? 'bg-red-400' : 'bg-yellow-400 animate-pulse'}`} />
-                        {bareStatus === 'online' ? 'Server Online' : bareStatus === 'offline' ? 'Server Offline' : 'Checking...'}
-                      </span>
-                    </label>
-                    <div className="flex gap-2">
-                      <input 
-                        type="text"
-                        value={bareServerUrl}
-                        onChange={(e) => setBareServerUrl(e.target.value)}
-                        className="flex-1 bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500/50"
-                        placeholder="https://your-bare-server.com/bare/"
-                      />
-                      <button 
-                        onClick={() => setBareServerUrl(`${window.location.origin}/bare/`)}
-                        className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-xs transition-colors"
-                      >
-                        Default
-                      </button>
-                    </div>
-                    <p className="text-[10px] text-gray-500">
-                      The TompHTTP Bare server used for unblocking and proxying.
-                    </p>
+                    <button 
+                      onClick={() => setBareServerUrl(`${window.location.origin}/bare/`)}
+                      className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-xs transition-colors"
+                    >
+                      Default
+                    </button>
                   </div>
-                )}
+                  <p className="text-[10px] text-gray-500">
+                    The TompHTTP Bare server used for unblocking and proxying.
+                  </p>
+                </div>
 
                 <div className="space-y-2">
                   <label className="text-xs font-medium text-gray-400 uppercase tracking-wider">
@@ -1030,21 +946,18 @@ export default function App() {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5">
                       <div className="flex items-center gap-3">
-                        <Shield className={`w-5 h-5 ${vercelMode ? 'text-blue-400' : 'text-orange-400'}`} />
+                        <Shield className="w-5 h-5 text-orange-400" />
                         <div>
                           <div className="text-sm font-medium">Force Proxy Mode</div>
-                          <div className="text-[10px] text-gray-500">
-                            {vercelMode ? 'Required for Vercel deployment' : 'Route all traffic through the local proxy'}
-                          </div>
+                          <div className="text-[10px] text-gray-500">Route all traffic through the local proxy</div>
                         </div>
                       </div>
                       <button 
-                        onClick={() => !vercelMode && setUseProxy(!useProxy)}
-                        disabled={vercelMode}
-                        className={`w-10 h-5 rounded-full relative transition-colors ${useProxy || vercelMode ? 'bg-blue-500' : 'bg-gray-600'} ${vercelMode ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        onClick={() => setUseProxy(!useProxy)}
+                        className={`w-10 h-5 rounded-full relative transition-colors ${useProxy ? 'bg-blue-500' : 'bg-gray-600'}`}
                       >
                         <motion.div 
-                          animate={{ x: (useProxy || vercelMode) ? 22 : 2 }}
+                          animate={{ x: useProxy ? 22 : 2 }}
                           className="absolute top-1 w-3 h-3 bg-white rounded-full shadow-sm"
                         />
                       </button>
@@ -1095,18 +1008,10 @@ export default function App() {
       {/* Status Bar */}
       <div className="bg-[#0f0f0f] px-4 py-1 text-[10px] text-gray-500 flex justify-between border-t border-white/5">
         <div className="flex items-center gap-3">
-          {!vercelMode && (
-            <span className="flex items-center gap-1.5">
-              <div className={`w-1.5 h-1.5 rounded-full ${bareStatus === 'online' ? 'bg-green-500' : 'bg-red-500'}`} />
-              Bare: {bareStatus === 'online' ? 'Active' : 'Inactive'}
-            </span>
-          )}
-          {vercelMode && (
-            <span className="flex items-center gap-1.5 text-blue-400">
-              <Globe className="w-2.5 h-2.5" />
-              Vercel Mode Active
-            </span>
-          )}
+          <span className="flex items-center gap-1.5">
+            <div className={`w-1.5 h-1.5 rounded-full ${bareStatus === 'online' ? 'bg-green-500' : 'bg-red-500'}`} />
+            Bare: {bareStatus === 'online' ? 'Active' : 'Inactive'}
+          </span>
           <span className="opacity-50">|</span>
           <span className="flex items-center gap-1"><Shield className="w-2.5 h-2.5" /> Secure Connection</span>
         </div>
