@@ -3,7 +3,6 @@ import {
   Search, 
   Shield, 
   Settings, 
-  History,
   X,
   Plus,
   Globe,
@@ -46,19 +45,6 @@ export default function App() {
     localStorage.setItem('vercelMode', vercelMode.toString());
   }, [vercelMode]);
   const [bareStatus, setBareStatus] = useState<'online' | 'offline' | 'checking'>('checking');
-
-  useEffect(() => {
-    const checkBare = async () => {
-      try {
-        const res = await fetch('/bare/');
-        if (res.ok) setBareStatus('online');
-        else setBareStatus('offline');
-      } catch {
-        setBareStatus('offline');
-      }
-    };
-    checkBare();
-  }, []);
 
   const [cookies, setCookies] = useState<any[]>([]);
   
@@ -126,9 +112,7 @@ export default function App() {
           console.error('Service Worker registration failed:', error);
         });
     }
-  }, []);
 
-  useEffect(() => {
     const checkBare = async () => {
       try {
         const res = await fetch('/bare/', { method: 'GET' });
