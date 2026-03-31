@@ -33,6 +33,9 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [viewMode, setViewMode] = useState<'desktop' | 'mobile'>('desktop');
   const [useProxy, setUseProxy] = useState(true); // Default to true
+  const [vercelMode, setVercelMode] = useState(() => {
+    return window.location.hostname.includes('vercel.app') || localStorage.getItem('nexus_vercel_mode') === 'true';
+  });
   const [showSettings, setShowSettings] = useState(false);
   const [bareServerUrl, setBareServerUrl] = useState(`${window.location.origin}/bare/`);
   const [bareStatus, setBareStatus] = useState<'online' | 'offline' | 'checking'>('checking');
@@ -119,7 +122,15 @@ export default function App() {
   }, [activeTabId]);
 
   useEffect(() => {
+    localStorage.setItem('nexus_vercel_mode', vercelMode.toString());
+  }, [vercelMode]);
+
+  useEffect(() => {
     const checkBare = async () => {
+      if (vercelMode) {
+        setBareStatus('offline');
+        return;
+      }
       try {
         // Bare server root usually responds to TompHTTP requests, 
         // but we can check if the endpoint is reachable.
@@ -774,10 +785,12 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-4 text-gray-500 text-[10px] font-bold uppercase tracking-widest">
-          <div className="flex items-center gap-2">
-            <div className={`w-1.5 h-1.5 rounded-full ${bareStatus === 'online' ? 'bg-green-500' : 'bg-red-500'}`} />
-            {bareStatus}
-          </div>
+          {!vercelMode && (
+            <div className="flex items-center gap-2">
+              <div className={`w-1.5 h-1.5 rounded-full ${bareStatus === 'online' ? 'bg-green-500' : 'bg-red-500'}`} />
+              {bareStatus}
+            </div>
+          )}
           <div>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
         </div>
       </div>
@@ -961,33 +974,54 @@ export default function App() {
               </div>
 
               <div className="p-6 space-y-6">
-                <div className="space-y-2">
-                  <label className="text-xs font-medium text-gray-400 uppercase tracking-wider flex justify-between">
-                    Bare Server Location
-                    <span className={`flex items-center gap-1 normal-case font-normal ${bareStatus === 'online' ? 'text-green-400' : bareStatus === 'offline' ? 'text-red-400' : 'text-yellow-400'}`}>
-                      <div className={`w-1.5 h-1.5 rounded-full ${bareStatus === 'online' ? 'bg-green-400 animate-pulse' : bareStatus === 'offline' ? 'bg-red-400' : 'bg-yellow-400 animate-pulse'}`} />
-                      {bareStatus === 'online' ? 'Server Online' : bareStatus === 'offline' ? 'Server Offline' : 'Checking...'}
-                    </span>
-                  </label>
-                  <div className="flex gap-2">
-                    <input 
-                      type="text"
-                      value={bareServerUrl}
-                      onChange={(e) => setBareServerUrl(e.target.value)}
-                      className="flex-1 bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500/50"
-                      placeholder="https://your-bare-server.com/bare/"
-                    />
-                    <button 
-                      onClick={() => setBareServerUrl(`${window.location.origin}/bare/`)}
-                      className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-xs transition-colors"
-                    >
-                      Default
-                    </button>
+                <div className="flex items-center justify-between p-3 bg-blue-500/10 rounded-xl border border-blue-500/20">
+                  <div className="flex items-center gap-3">
+                    <Globe className="w-5 h-5 text-blue-400" />
+                    <div>
+                      <div className="text-sm font-bold">Vercel Mode</div>
+                      <div className="text-[10px] text-gray-400">Optimizes for serverless environments</div>
+                    </div>
                   </div>
-                  <p className="text-[10px] text-gray-500">
-                    The TompHTTP Bare server used for unblocking and proxying.
-                  </p>
+                  <button 
+                    onClick={() => setVercelMode(!vercelMode)}
+                    className={`w-10 h-5 rounded-full relative transition-colors ${vercelMode ? 'bg-blue-500' : 'bg-gray-600'}`}
+                  >
+                    <motion.div 
+                      animate={{ x: vercelMode ? 22 : 2 }}
+                      className="absolute top-1 w-3 h-3 bg-white rounded-full shadow-sm"
+                    />
+                  </button>
                 </div>
+
+                {!vercelMode && (
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-gray-400 uppercase tracking-wider flex justify-between">
+                      Bare Server Location
+                      <span className={`flex items-center gap-1 normal-case font-normal ${bareStatus === 'online' ? 'text-green-400' : bareStatus === 'offline' ? 'text-red-400' : 'text-yellow-400'}`}>
+                        <div className={`w-1.5 h-1.5 rounded-full ${bareStatus === 'online' ? 'bg-green-400 animate-pulse' : bareStatus === 'offline' ? 'bg-red-400' : 'bg-yellow-400 animate-pulse'}`} />
+                        {bareStatus === 'online' ? 'Server Online' : bareStatus === 'offline' ? 'Server Offline' : 'Checking...'}
+                      </span>
+                    </label>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text"
+                        value={bareServerUrl}
+                        onChange={(e) => setBareServerUrl(e.target.value)}
+                        className="flex-1 bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500/50"
+                        placeholder="https://your-bare-server.com/bare/"
+                      />
+                      <button 
+                        onClick={() => setBareServerUrl(`${window.location.origin}/bare/`)}
+                        className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-xs transition-colors"
+                      >
+                        Default
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-gray-500">
+                      The TompHTTP Bare server used for unblocking and proxying.
+                    </p>
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <label className="text-xs font-medium text-gray-400 uppercase tracking-wider">
@@ -996,18 +1030,21 @@ export default function App() {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5">
                       <div className="flex items-center gap-3">
-                        <Shield className="w-5 h-5 text-orange-400" />
+                        <Shield className={`w-5 h-5 ${vercelMode ? 'text-blue-400' : 'text-orange-400'}`} />
                         <div>
                           <div className="text-sm font-medium">Force Proxy Mode</div>
-                          <div className="text-[10px] text-gray-500">Route all traffic through the local proxy</div>
+                          <div className="text-[10px] text-gray-500">
+                            {vercelMode ? 'Required for Vercel deployment' : 'Route all traffic through the local proxy'}
+                          </div>
                         </div>
                       </div>
                       <button 
-                        onClick={() => setUseProxy(!useProxy)}
-                        className={`w-10 h-5 rounded-full relative transition-colors ${useProxy ? 'bg-blue-500' : 'bg-gray-600'}`}
+                        onClick={() => !vercelMode && setUseProxy(!useProxy)}
+                        disabled={vercelMode}
+                        className={`w-10 h-5 rounded-full relative transition-colors ${useProxy || vercelMode ? 'bg-blue-500' : 'bg-gray-600'} ${vercelMode ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
                         <motion.div 
-                          animate={{ x: useProxy ? 22 : 2 }}
+                          animate={{ x: (useProxy || vercelMode) ? 22 : 2 }}
                           className="absolute top-1 w-3 h-3 bg-white rounded-full shadow-sm"
                         />
                       </button>
@@ -1058,10 +1095,18 @@ export default function App() {
       {/* Status Bar */}
       <div className="bg-[#0f0f0f] px-4 py-1 text-[10px] text-gray-500 flex justify-between border-t border-white/5">
         <div className="flex items-center gap-3">
-          <span className="flex items-center gap-1.5">
-            <div className={`w-1.5 h-1.5 rounded-full ${bareStatus === 'online' ? 'bg-green-500' : 'bg-red-500'}`} />
-            Bare: {bareStatus === 'online' ? 'Active' : 'Inactive'}
-          </span>
+          {!vercelMode && (
+            <span className="flex items-center gap-1.5">
+              <div className={`w-1.5 h-1.5 rounded-full ${bareStatus === 'online' ? 'bg-green-500' : 'bg-red-500'}`} />
+              Bare: {bareStatus === 'online' ? 'Active' : 'Inactive'}
+            </span>
+          )}
+          {vercelMode && (
+            <span className="flex items-center gap-1.5 text-blue-400">
+              <Globe className="w-2.5 h-2.5" />
+              Vercel Mode Active
+            </span>
+          )}
           <span className="opacity-50">|</span>
           <span className="flex items-center gap-1"><Shield className="w-2.5 h-2.5" /> Secure Connection</span>
         </div>
