@@ -1,5 +1,5 @@
 {
-  "name": "Nexus Browser",
-  "description": "A web-based browser with a built-in proxy to bypass restrictions and load sites in an iframe.",
+  "name": "Nexus Browser (Rammerhead Clone)",
+  "description": "A powerful web-based browser proxy that works just like Rammerhead, allowing you to browse any site freely through an iframe with full session and cookie support.",
   "requestFramePermissions": []
 }
