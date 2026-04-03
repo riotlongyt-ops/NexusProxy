@@ -1,8 +1,9 @@
 // public/sw.js
-import { WispClient } from 'https://cdn.jsdelivr.net/npm/@mercuryworkshop/wisp-js@1.1.0/dist/index.mjs';
+import { BareMuxConnection } from 'https://cdn.jsdelivr.net/npm/@mercuryworkshop/bare-mux@1.1.0/dist/index.mjs';
 
 const config = {
   prefix: '/nexus/',
+  bareUrl: '/bare/',
   wispUrl: (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/wisp/',
   encodeUrl: (url) => {
     if (!url) return url;
@@ -22,7 +23,28 @@ const config = {
   }
 };
 
-let wisp = new WispClient(config.wispUrl);
+const connection = new BareMuxConnection('/baremux/');
+let proxyReady = false;
+
+async function initProxy() {
+  try {
+    // Switch to scramjet for better YouTube and dynamic site support
+    await connection.setTransport('https://cdn.jsdelivr.net/npm/@mercuryworkshop/scramjet@1.0.0/dist/index.mjs', [{ wisp: config.wispUrl }]);
+    proxyReady = true;
+    console.log('Nexus: Scramjet transport initialized');
+  } catch (e) {
+    console.error('Nexus: Failed to initialize scramjet transport, falling back to epoxy:', e);
+    try {
+      await connection.setTransport('https://cdn.jsdelivr.net/npm/@mercuryworkshop/epoxy-tls@1.1.0/dist/index.mjs', [{ wisp: config.wispUrl }]);
+      proxyReady = true;
+      console.log('Nexus: Epoxy transport initialized (fallback)');
+    } catch (e2) {
+      console.error('Nexus: All transports failed:', e2);
+    }
+  }
+}
+
+initProxy();
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -36,7 +58,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   
   // Skip if it's a request to the proxy's own assets or internal API
-  const internalApis = ['/api/status', '/api/suggestions', '/api/cookies'];
+  const internalApis = ['/api/status', '/api/suggestions', '/api/config', '/api/cookies', '/baremux/worker.js'];
   if (internalApis.includes(url.pathname) || 
       url.pathname === '/sw.js' || 
       url.pathname === '/nexus-client.js' || 
@@ -47,7 +69,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // If the request is already proxied via the server, we can try to hijack it for efficiency
+  // If the request is already proxied via the server
   if (url.pathname.startsWith(config.prefix)) {
     const encodedTarget = url.pathname.split(config.prefix)[1];
     const targetUrl = config.decodeUrl(encodedTarget);
@@ -55,29 +77,33 @@ self.addEventListener('fetch', (event) => {
     if (targetUrl && targetUrl.startsWith('http')) {
       event.respondWith(
         (async () => {
+          if (!proxyReady) await initProxy();
           try {
-            // Use Wisp for efficiency if it's not a main document request
+            // For subresources, we can try to use the connection for efficiency
             if (event.request.destination !== 'document') {
-              const headers = new Headers(event.request.headers);
-              const targetURL = new URL(targetUrl);
-              
-              // Sanitize headers for the target
-              headers.set('Host', targetURL.host);
-              if (headers.has('Origin')) headers.set('Origin', targetURL.origin);
-              if (headers.has('Referer')) headers.set('Referer', targetURL.origin);
-
-              const response = await wisp.fetch(targetUrl, {
+              const response = await connection.fetch(targetUrl, {
                 method: event.request.method,
-                headers: headers,
+                headers: event.request.headers,
                 body: event.request.method !== 'GET' && event.request.method !== 'HEAD' ? await event.request.blob() : undefined,
                 redirect: 'follow'
               });
               
-              // Forward headers correctly
               const newHeaders = new Headers(response.headers);
               newHeaders.delete('content-security-policy');
               newHeaders.delete('x-frame-options');
               newHeaders.delete('strict-transport-security');
+              
+              // Handle cookies in SW
+              if (response.headers.has('set-cookie')) {
+                const setCookies = response.headers.get('set-cookie');
+                const rewrittenCookies = setCookies.split(',').map(cookie => {
+                  return cookie
+                    .replace(/Domain=[^;]+;?/gi, '')
+                    .replace(/Secure;?/gi, '')
+                    .replace(/SameSite=[^;]+;?/gi, 'SameSite=Lax');
+                });
+                newHeaders.set('Set-Cookie', rewrittenCookies.join(', '));
+              }
               
               return new Response(response.body, {
                 status: response.status,
@@ -86,7 +112,7 @@ self.addEventListener('fetch', (event) => {
               });
             }
           } catch (e) {
-            console.warn('Wisp fetch failed, falling back to server proxy:', e);
+            console.warn('Bare-mux fetch failed, falling back to server proxy:', e);
           }
           return fetch(event.request);
         })()
@@ -96,29 +122,24 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Intercept requests from proxied pages that aren't already prefixed
-  // This is the core "Scramjet-like" interception
   event.respondWith(
     (async () => {
-      const client = await self.clients.get(event.clientId);
-      if (client && client.url.includes(config.prefix)) {
-        try {
-          const clientUrl = new URL(client.url);
-          const encodedTarget = clientUrl.pathname.split(config.prefix)[1];
+      if (!proxyReady) await initProxy();
+      
+      let client = await self.clients.get(event.clientId);
+      
+      // Fallback for requests without clientId (e.g. some subresources)
+      if (!client && event.request.referrer) {
+        const referrerUrl = new URL(event.request.referrer);
+        if (referrerUrl.pathname.startsWith(config.prefix)) {
+          const encodedTarget = referrerUrl.pathname.split(config.prefix)[1];
           const targetBase = new URL(config.decodeUrl(encodedTarget));
-          
           const absoluteTarget = new URL(event.request.url, targetBase).href;
-          const targetURL = new URL(absoluteTarget);
           
-          // Use Wisp directly for subresources
           try {
-            const headers = new Headers(event.request.headers);
-            headers.set('Host', targetURL.host);
-            if (headers.has('Origin')) headers.set('Origin', targetURL.origin);
-            if (headers.has('Referer')) headers.set('Referer', targetURL.origin);
-
-            const response = await wisp.fetch(absoluteTarget, {
+            const response = await connection.fetch(absoluteTarget, {
               method: event.request.method,
-              headers: headers,
+              headers: event.request.headers,
               body: event.request.method !== 'GET' && event.request.method !== 'HEAD' ? await event.request.blob() : undefined,
               redirect: 'follow'
             });
@@ -127,6 +148,64 @@ self.addEventListener('fetch', (event) => {
             newHeaders.delete('content-security-policy');
             newHeaders.delete('x-frame-options');
             newHeaders.delete('strict-transport-security');
+            
+            // Handle cookies in SW
+            if (response.headers.has('set-cookie')) {
+              const setCookies = response.headers.get('set-cookie');
+              const rewrittenCookies = setCookies.split(',').map(cookie => {
+                return cookie
+                  .replace(/Domain=[^;]+;?/gi, '')
+                  .replace(/Secure;?/gi, '')
+                  .replace(/SameSite=[^;]+;?/gi, 'SameSite=Lax');
+              });
+              newHeaders.set('Set-Cookie', rewrittenCookies.join(', '));
+            }
+            
+            return new Response(response.body, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: newHeaders
+            });
+          } catch (e) {
+            const proxiedUrl = config.prefix + config.encodeUrl(absoluteTarget);
+            return fetch(proxiedUrl);
+          }
+        }
+      }
+
+      if (client && client.url.includes(config.prefix)) {
+        try {
+          const clientUrl = new URL(client.url);
+          const encodedTarget = clientUrl.pathname.split(config.prefix)[1];
+          const targetBase = new URL(config.decodeUrl(encodedTarget));
+          
+          const absoluteTarget = new URL(event.request.url, targetBase).href;
+          
+          // Use Bare-mux directly for subresources
+          try {
+            const response = await connection.fetch(absoluteTarget, {
+              method: event.request.method,
+              headers: event.request.headers,
+              body: event.request.method !== 'GET' && event.request.method !== 'HEAD' ? await event.request.blob() : undefined,
+              redirect: 'follow'
+            });
+            
+            const newHeaders = new Headers(response.headers);
+            newHeaders.delete('content-security-policy');
+            newHeaders.delete('x-frame-options');
+            newHeaders.delete('strict-transport-security');
+            
+            // Handle cookies in SW
+            if (response.headers.has('set-cookie')) {
+              const setCookies = response.headers.get('set-cookie');
+              const rewrittenCookies = setCookies.split(',').map(cookie => {
+                return cookie
+                  .replace(/Domain=[^;]+;?/gi, '')
+                  .replace(/Secure;?/gi, '')
+                  .replace(/SameSite=[^;]+;?/gi, 'SameSite=Lax');
+              });
+              newHeaders.set('Set-Cookie', rewrittenCookies.join(', '));
+            }
             
             return new Response(response.body, {
               status: response.status,

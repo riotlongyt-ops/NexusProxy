@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Search, 
   Settings, 
@@ -17,6 +17,69 @@ import {
   RotateCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+
+const MatrixBackground = () => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let width = canvas.width = window.innerWidth;
+    let height = canvas.height = window.innerHeight;
+
+    const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$+-*/=%\"'#&_(),.;:?!\\|{}<>[]^~";
+    const fontSize = 16;
+    const columns = width / fontSize;
+    const drops: number[] = [];
+
+    for (let i = 0; i < columns; i++) {
+      drops[i] = 1;
+    }
+
+    const draw = () => {
+      ctx.fillStyle = 'rgba(17, 17, 17, 0.1)';
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.05)'; // Faded white/gray for "interstellar" feel
+      ctx.font = fontSize + 'px monospace';
+
+      for (let i = 0; i < drops.length; i++) {
+        const text = characters.charAt(Math.floor(Math.random() * characters.length));
+        ctx.fillText(text, i * fontSize, drops[i] * fontSize);
+
+        if (drops[i] * fontSize > height && Math.random() > 0.975) {
+          drops[i] = 0;
+        }
+        drops[i]++;
+      }
+    };
+
+    const interval = setInterval(draw, 33);
+
+    const handleResize = () => {
+      width = canvas.width = window.innerWidth;
+      height = canvas.height = window.innerHeight;
+      const newColumns = width / fontSize;
+      if (newColumns > drops.length) {
+        for (let i = drops.length; i < newColumns; i++) {
+          drops[i] = 1;
+        }
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []);
+
+  return <canvas ref={canvasRef} className="fixed inset-0 z-[-1] opacity-50" />;
+};
 
 // XOR Encoding logic (must match server.ts and sw.js)
 const config = {
@@ -58,6 +121,7 @@ const cloaks: Record<string, { title: string; icon: string }> = {
 };
 
 const apps = [
+  { name: 'YouTube', url: 'https://youtube.com', icon: 'https://www.google.com/s2/favicons?domain=youtube.com&sz=128' },
   { name: 'Discord', url: 'https://discord.com', icon: 'https://assets-global.website-files.com/6257adef93867e3d0394e364/6257adef93867e07c394e395_Discord-Logo-Color.svg' },
   { name: 'Spotify', url: 'https://open.spotify.com', icon: 'https://www.google.com/s2/favicons?domain=spotify.com&sz=128' },
   { name: 'Reddit', url: 'https://www.reddit.com', icon: 'https://www.google.com/s2/favicons?domain=reddit.com&sz=128' },
@@ -92,11 +156,24 @@ export default function App() {
   const [panicUrl, setPanicUrl] = useState(() => localStorage.getItem('nexus_panic_url') || 'https://classroom.google.com/');
   const [aboutBlank, setAboutBlank] = useState(() => localStorage.getItem('nexus_about_blank') === 'true');
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<{ type: 'search' | 'url', value: string }[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const searchRef = useRef<HTMLFormElement>(null);
 
   const showSaveStatus = (msg: string) => {
     setSaveStatus(msg);
     setTimeout(() => setSaveStatus(null), 2000);
   };
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('nexus_about_blank', String(aboutBlank));
@@ -173,8 +250,47 @@ export default function App() {
     }
   }, [isLoading]);
 
+  useEffect(() => {
+    if (!urlInput.trim()) {
+      setSuggestions([]);
+      return;
+    }
+
+    const fetchSuggestions = async () => {
+      try {
+        const res = await fetch(`/api/suggestions?q=${encodeURIComponent(urlInput)}`);
+        const data = await res.json();
+        const searchSuggestions = data.slice(0, 5).map((s: string) => ({ type: 'search', value: s }));
+        
+        // Add some common website matches if the input looks like a domain or name
+        const commonSites = [
+          { name: 'google.com', url: 'https://google.com' },
+          { name: 'youtube.com', url: 'https://youtube.com' },
+          { name: 'github.com', url: 'https://github.com' },
+          { name: 'discord.com', url: 'https://discord.com' },
+          { name: 'spotify.com', url: 'https://spotify.com' },
+          { name: 'reddit.com', url: 'https://reddit.com' },
+          { name: 'twitter.com', url: 'https://twitter.com' },
+          { name: 'instagram.com', url: 'https://instagram.com' },
+        ];
+
+        const siteMatches = commonSites
+          .filter(site => site.name.includes(urlInput.toLowerCase()))
+          .map(site => ({ type: 'url', value: site.url }));
+
+        setSuggestions([...siteMatches, ...searchSuggestions].slice(0, 8) as any);
+      } catch (e) {
+        console.error('Failed to fetch suggestions', e);
+      }
+    };
+
+    const timeoutId = setTimeout(fetchSuggestions, 200);
+    return () => clearTimeout(timeoutId);
+  }, [urlInput]);
+
   const navigateTo = (url: string) => {
     if (!url) return;
+    setShowSuggestions(false);
     setIsLoading(true);
     let finalUrl = url;
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
@@ -193,15 +309,15 @@ export default function App() {
 
   const handleUrlSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setShowSuggestions(false);
     navigateTo(urlInput);
   };
 
   return (
     <div className="min-h-screen flex flex-col text-white font-sans selection:bg-white/20">
-      {/* Background Shapes */}
+      {/* Background */}
       <div className="nexus-bg">
-        <div className="wavy-shape rounded-none" />
-        <div className="wavy-shape-2 rounded-none" />
+        <MatrixBackground />
       </div>
 
       {/* Header */}
@@ -258,16 +374,70 @@ export default function App() {
                 <p className="text-gray-500 text-sm font-bold tracking-[0.3em]">gatekeep ts</p>
               </div>
 
-              <form onSubmit={handleUrlSubmit} className="w-full max-w-2xl">
+              <form ref={searchRef} onSubmit={handleUrlSubmit} className="w-full max-w-2xl relative">
                 <div className="relative group">
                   <input
                     type="text"
                     value={urlInput}
-                    onChange={(e) => setUrlInput(e.target.value)}
+                    onChange={(e) => {
+                      setUrlInput(e.target.value);
+                      setShowSuggestions(true);
+                    }}
+                    onFocus={() => setShowSuggestions(true)}
                     placeholder="Search or enter a URL"
-                    className="w-full bg-[#222] border-none rounded-none py-6 px-8 text-xl focus:outline-none focus:ring-2 focus:ring-white/10 transition-all text-center placeholder:text-gray-600"
+                    className="w-full bg-[#222] border-none rounded-none py-6 px-8 text-xl focus:outline-none focus:ring-2 focus:ring-white/10 transition-all text-center placeholder:text-gray-600 pr-16"
                   />
+                  {urlInput && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUrlInput('');
+                        setSuggestions([]);
+                      }}
+                      className="absolute right-6 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white transition-colors"
+                    >
+                      <X className="w-6 h-6" />
+                    </button>
+                  )}
                 </div>
+
+                <AnimatePresence>
+                  {showSuggestions && suggestions.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="absolute top-full left-0 w-full bg-[#1a1a1a] border-t border-white/5 z-[60] shadow-2xl"
+                    >
+                      {suggestions.map((suggestion, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => {
+                            setUrlInput(suggestion.value);
+                            navigateTo(suggestion.value);
+                            setShowSuggestions(false);
+                          }}
+                          className="w-full px-8 py-4 flex items-center gap-4 hover:bg-white/5 transition-colors text-left"
+                        >
+                          {suggestion.type === 'url' ? (
+                            <img 
+                              src={`https://www.google.com/s2/favicons?domain=${new URL(suggestion.value).hostname}&sz=32`} 
+                              alt="" 
+                              className="w-5 h-5 rounded-none"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <Search className="w-5 h-5 text-gray-500" />
+                          )}
+                          <span className={suggestion.type === 'url' ? 'text-white font-bold' : 'text-gray-400'}>
+                            {suggestion.type === 'url' ? new URL(suggestion.value).hostname : suggestion.value}
+                          </span>
+                        </button>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </form>
             </motion.div>
           )}
@@ -481,25 +651,12 @@ export default function App() {
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center p-6"
           >
-            <div className="w-full max-w-md space-y-8 text-center">
-              <div className="relative w-24 h-24 mx-auto">
-                <motion.div 
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-                  className="absolute inset-0 border-4 border-white/10 border-t-white rounded-full"
-                />
-              </div>
-              <div className="space-y-2">
-                <h2 className="text-2xl font-black uppercase tracking-widest">{loadingSteps[loadingStep].title}</h2>
-                <p className="text-gray-500 font-medium">{loadingSteps[loadingStep].desc}</p>
-              </div>
-              <div className="w-full h-1 bg-white/10 rounded-none overflow-hidden">
-                <motion.div 
-                  initial={{ width: 0 }}
-                  animate={{ width: `${((loadingStep + 1) / loadingSteps.length) * 100}%` }}
-                  className="h-full bg-white rounded-none"
-                />
-              </div>
+            <div className="relative w-24 h-24">
+              <motion.div 
+                animate={{ rotate: 360 }}
+                transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                className="absolute inset-0 border-4 border-white/10 border-t-white rounded-none"
+              />
             </div>
           </motion.div>
         )}

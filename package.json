@@ -18,6 +18,7 @@
     "@tomphttp/bare-server-node": "^2.0.6",
     "@vitejs/plugin-react": "^5.0.4",
     "axios": "^1.13.6",
+    "axios-cookiejar-support": "^6.0.5",
     "cheerio": "^1.2.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",

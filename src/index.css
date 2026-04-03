@@ -48,26 +48,6 @@ body {
   pointer-events: none;
 }
 
-.wavy-shape {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 40%;
-  background: linear-gradient(to top, rgba(255, 255, 255, 0.02), transparent);
-  clip-path: ellipse(80% 50% at 50% 100%);
-}
-
-.wavy-shape-2 {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 30%;
-  background: linear-gradient(to top, rgba(255, 255, 255, 0.01), transparent);
-  clip-path: ellipse(100% 40% at 50% 100%);
-}
-
 iframe {
   background-color: white;
 }
