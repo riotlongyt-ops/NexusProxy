@@ -5,7 +5,7 @@ import fs from "fs";
 import http from "http";
 import https from "https";
 import axios from "axios";
-import wisp from "wisp-server-node";
+import { routeRequest as wispRouteRequest } from "@mercuryworkshop/wisp-js/server";
 import * as cheerio from "cheerio";
 import zlib from "zlib";
 import { nexusConfig } from "./src/nexusConfig.js";
@@ -22,7 +22,7 @@ async function startServer() {
   const server = http.createServer(app);
   server.on("upgrade", (req, socket, head) => {
     if (req.url?.startsWith(nexusConfig.wispPath)) {
-      wisp.routeRequest(req, socket as any, head);
+      wispRouteRequest(req, socket as any, head);
     } else {
       socket.end();
     }
