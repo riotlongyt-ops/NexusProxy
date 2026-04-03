@@ -1,65 +1,69 @@
+// public/sw.js
 const config = {
-    prefix: '/nexus/',
-    encodeUrl: (url) => {
-        if (!url) return url;
-        const xored = url.split('').map((char, i) => i % 2 ? String.fromCharCode(char.charCodeAt(0) ^ 2) : char).join('');
-        return btoa(xored).replace(/\//g, '_').replace(/\+/g, '-').replace(/=/g, '');
-    },
-    decodeUrl: (url) => {
-        if (!url) return url;
-        try {
-            let str = url.replace(/_/g, '/').replace(/-/g, '+');
-            while (str.length % 4) str += '=';
-            const decoded = atob(str);
-            return decoded.split('').map((char, i) => i % 2 ? String.fromCharCode(char.charCodeAt(0) ^ 2) : char).join('');
-        } catch (e) {
-            return url;
-        }
+  prefix: '/nexus/',
+  encodeUrl: (url) => {
+    if (!url) return url;
+    const xored = url.split('').map((char, i) => i % 2 ? String.fromCharCode(char.charCodeAt(0) ^ 2) : char).join('');
+    return btoa(xored).replace(/\//g, '_').replace(/\+/g, '-').replace(/=/g, '');
+  },
+  decodeUrl: (url) => {
+    if (!url) return url;
+    try {
+      let str = url.replace(/_/g, '/').replace(/-/g, '+');
+      while (str.length % 4) str += '=';
+      const decoded = atob(str);
+      return decoded.split('').map((char, i) => i % 2 ? String.fromCharCode(char.charCodeAt(0) ^ 2) : char).join('');
+    } catch (e) {
+      return url;
     }
+  }
 };
 
-self.addEventListener('fetch', (event) => {
-    const url = new URL(event.request.url);
-    
-    if (url.pathname.startsWith(config.prefix)) {
-        const targetUrl = config.decodeUrl(url.pathname.slice(config.prefix.length));
-        if (targetUrl) {
-            event.respondWith(handleRequest(event.request, targetUrl));
-        }
-    }
+self.addEventListener('install', (event) => {
+  self.skipWaiting();
 });
 
-async function handleRequest(request, targetUrl) {
-    try {
-        const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
-        
-        const headers = new Headers(request.headers);
-        headers.set('X-Nexus-Target', targetUrl);
+self.addEventListener('activate', (event) => {
+  event.waitUntil(self.clients.claim());
+});
 
-        const init = {
-            method: request.method,
-            headers: headers,
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  
+  // Skip if it's a request to the proxy's own assets or API
+  if (url.pathname.startsWith('/api/') || url.pathname === '/sw.js' || url.pathname === '/nexus-client.js' || url.pathname === '/') {
+    return;
+  }
+
+  // If the request is already proxied, let it through
+  if (url.pathname.startsWith(config.prefix)) {
+    return;
+  }
+
+  // Intercept requests from proxied pages
+  event.respondWith(
+    self.clients.get(event.clientId).then(client => {
+      if (client && client.url.includes(config.prefix)) {
+        try {
+          const clientUrl = new URL(client.url);
+          const encodedTarget = clientUrl.pathname.split(config.prefix)[1];
+          const targetBase = new URL(config.decodeUrl(encodedTarget));
+          
+          const absoluteTarget = new URL(event.request.url, targetBase).href;
+          const proxiedUrl = config.prefix + config.encodeUrl(absoluteTarget);
+          
+          return fetch(proxiedUrl, {
+            method: event.request.method,
+            headers: event.request.headers,
+            body: event.request.method !== 'GET' && event.request.method !== 'HEAD' ? event.request.blob() : undefined,
             redirect: 'manual'
-        };
-
-        if (request.method !== 'GET' && request.method !== 'HEAD') {
-            init.body = await request.arrayBuffer();
+          });
+        } catch (e) {
+          console.error('Nexus SW Error:', e);
         }
-
-        const response = await fetch(proxyUrl, init);
-
-        // Handle redirects
-        if (response.status >= 300 && response.status < 400) {
-            const location = response.headers.get('Location');
-            if (location) {
-                const absoluteLocation = new URL(location, targetUrl).href;
-                const redirectUrl = new URL(config.prefix + config.encodeUrl(absoluteLocation), self.location.origin).href;
-                return Response.redirect(redirectUrl, response.status);
-            }
-        }
-
-        return response;
-    } catch (error) {
-        return new Response('Proxy Error: ' + error.message, { status: 500 });
-    }
-}
+      }
+      
+      return fetch(event.request);
+    })
+  );
+});

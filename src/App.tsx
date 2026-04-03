@@ -8,7 +8,15 @@ import {
   Globe,
   Download,
   Trash2,
-  RotateCw
+  RotateCw,
+  Gamepad2,
+  LayoutGrid,
+  Youtube,
+  Home,
+  ExternalLink,
+  Check,
+  ChevronRight,
+  Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -35,19 +43,61 @@ const config = {
   },
 };
 
+const searchEngines: Record<string, string> = {
+  google: 'https://www.google.com/search?q=',
+  bing: 'https://www.bing.com/search?q=',
+  duckduckgo: 'https://duckduckgo.com/?q=',
+  brave: 'https://search.brave.com/search?q=',
+};
+
+const cloaks: Record<string, { title: string; icon: string }> = {
+  none: { title: 'Nexus', icon: '/favicon.ico' },
+  google: { title: 'Google', icon: 'https://www.google.com/favicon.ico' },
+  drive: { title: 'My Drive - Google Drive', icon: 'https://ssl.gstatic.com/docs/doclist/images/drive_2022q3_32dp.png' },
+  classroom: { title: 'Classes', icon: 'https://www.gstatic.com/classroom/favicon.png' },
+  canvas: { title: 'Canvas', icon: 'https://du11hjcvx07p8.cloudfront.net/favicon.ico' },
+  zoom: { title: 'Zoom', icon: 'https://st1.zoom.us/zoom.ico' },
+};
+
+const apps = [
+  { name: 'Discord', url: 'https://discord.com', icon: 'https://assets-global.website-files.com/6257adef93867e3d0394e364/6257adef93867e07c394e395_Discord-Logo-Color.svg' },
+  { name: 'Spotify', url: 'https://open.spotify.com', icon: 'https://www.google.com/s2/favicons?domain=spotify.com&sz=128' },
+  { name: 'Reddit', url: 'https://www.reddit.com', icon: 'https://www.google.com/s2/favicons?domain=reddit.com&sz=128' },
+  { name: 'Twitch', url: 'https://www.twitch.tv', icon: 'https://www.google.com/s2/favicons?domain=twitch.tv&sz=128' },
+  { name: 'Twitter', url: 'https://twitter.com', icon: 'https://www.google.com/s2/favicons?domain=twitter.com&sz=128' },
+  { name: 'TikTok', url: 'https://www.tiktok.com', icon: 'https://www.google.com/s2/favicons?domain=tiktok.com&sz=128' },
+  { name: 'Instagram', url: 'https://www.instagram.com', icon: 'https://www.google.com/s2/favicons?domain=instagram.com&sz=128' },
+  { name: 'Pinterest', url: 'https://www.pinterest.com', icon: 'https://www.google.com/s2/favicons?domain=pinterest.com&sz=128' },
+];
+
+const games = [
+  { name: 'Crazy Games', url: 'https://www.crazygames.com', icon: 'https://www.google.com/s2/favicons?domain=crazygames.com&sz=128' },
+  { name: 'Poki', url: 'https://poki.com', icon: 'https://www.google.com/s2/favicons?domain=poki.com&sz=128' },
+  { name: '1v1.LOL', url: 'https://1v1.lol', icon: 'https://www.google.com/s2/favicons?domain=1v1.lol&sz=128' },
+  { name: 'Slope', url: 'https://slopegame.online', icon: 'https://www.google.com/s2/favicons?domain=slopegame.online&sz=128' },
+  { name: 'Shell Shockers', url: 'https://shellshock.io', icon: 'https://www.google.com/s2/favicons?domain=shellshock.io&sz=128' },
+  { name: 'Zombs Royale', url: 'https://zombsroyale.io', icon: 'https://www.google.com/s2/favicons?domain=zombsroyale.io&sz=128' },
+  { name: 'Krunker', url: 'https://krunker.io', icon: 'https://www.google.com/s2/favicons?domain=krunker.io&sz=128' },
+  { name: 'Agar.io', url: 'https://agar.io', icon: 'https://www.google.com/s2/favicons?domain=agar.io&sz=128' },
+];
+
 export default function App() {
   const [urlInput, setUrlInput] = useState('');
+  const [currentView, setCurrentView] = useState<'home' | 'apps' | 'games' | 'youtube' | 'settings'>('home');
+  const [searchEngine, setSearchEngine] = useState(() => localStorage.getItem('nexus_search_engine') || 'google');
+  const [tabCloak, setTabCloak] = useState(() => localStorage.getItem('nexus_tab_cloak') || 'none');
+  const [proxyMode, setProxyMode] = useState(() => localStorage.getItem('nexus_proxy_mode') || 'sw');
+  const [bareStatus, setBareStatus] = useState<'online' | 'offline' | 'checking'>('checking');
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadingStep, setLoadingStep] = useState(0);
+  const [cookies, setCookies] = useState<any[]>([]);
+  const [vercelMode, setVercelMode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showCookies, setShowCookies] = useState(false);
-  const [vercelMode, setVercelMode] = useState(() => localStorage.getItem('vercelMode') === 'true');
+  const [showAddShortcut, setShowAddShortcut] = useState(false);
+  const [newShortcutName, setNewShortcutName] = useState('');
+  const [newShortcutUrl, setNewShortcutUrl] = useState('');
 
-  useEffect(() => {
-    localStorage.setItem('vercelMode', vercelMode.toString());
-  }, [vercelMode]);
-  const [bareStatus, setBareStatus] = useState<'online' | 'offline' | 'checking'>('checking');
-
-  const [cookies, setCookies] = useState<any[]>([]);
-  
   const [shortcuts, setShortcuts] = useState<{ name: string; url: string }[]>(() => {
     const saved = localStorage.getItem('nexus_shortcuts');
     if (saved) return JSON.parse(saved);
@@ -55,23 +105,33 @@ export default function App() {
       { name: 'Google', url: 'https://www.google.com' },
       { name: 'YouTube', url: 'https://www.youtube.com' },
       { name: 'DuckDuckGo', url: 'https://duckduckgo.com' },
-      { name: 'Crazy Games', url: 'https://www.crazygames.com' },
-      { name: 'Poki', url: 'https://poki.com' },
-      { name: 'Discord', url: 'https://discord.com' },
-      { name: 'Reddit', url: 'https://www.reddit.com' },
-      { name: 'GitHub', url: 'https://github.com' },
     ];
   });
-  const [showAddShortcut, setShowAddShortcut] = useState(false);
-  const [newShortcutName, setNewShortcutName] = useState('');
-  const [newShortcutUrl, setNewShortcutUrl] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [loadingStep, setLoadingStep] = useState(0);
+  useEffect(() => {
+    localStorage.setItem('nexus_search_engine', searchEngine);
+  }, [searchEngine]);
+
+  useEffect(() => {
+    localStorage.setItem('nexus_tab_cloak', tabCloak);
+    const cloak = cloaks[tabCloak];
+    if (cloak) {
+      document.title = cloak.title;
+      const link = (document.querySelector("link[rel*='icon']") as HTMLLinkElement) || document.createElement('link');
+      link.type = 'image/x-icon';
+      link.rel = 'shortcut icon';
+      link.href = cloak.icon;
+      document.getElementsByTagName('head')[0].appendChild(link);
+    }
+  }, [tabCloak]);
+
+  useEffect(() => {
+    localStorage.setItem('nexus_proxy_mode', proxyMode);
+  }, [proxyMode]);
 
   const loadingSteps = [
+    { title: 'Epoxy TLS Handshake', desc: 'Establishing secure client-side TLS tunnel...' },
     { title: 'Request Interception', desc: 'Registering Service Worker proxy...' },
-    { title: 'URL Encoding', desc: 'XOR-Base64 codec transformation...' },
-    { title: 'Wisp Transport', desc: 'Establishing WebSocket tunnel...' },
+    { title: 'Wisp Transport', desc: 'Tunnelling over WebSocket...' },
     { title: 'Content Rewriting', desc: 'Modifying HTML/JS on the fly...' },
     { title: 'Dynamic Rendering', desc: 'Serving proxied content...' }
   ];
@@ -96,13 +156,6 @@ export default function App() {
 
   // Register Service Worker and handle query params
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('settings') === 'true') setShowSettings(true);
-    if (params.get('cookies') === 'true') {
-      setShowCookies(true);
-      fetchCookies();
-    }
-
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js', { scope: '/' })
         .then((registration) => {
@@ -148,7 +201,8 @@ export default function App() {
       if (url.includes('.') && !url.includes(' ')) {
         finalUrl = 'https://' + url;
       } else {
-        finalUrl = `https://www.google.com/search?q=${encodeURIComponent(url)}`;
+        const engine = searchEngines[searchEngine] || searchEngines.google;
+        finalUrl = `${engine}${encodeURIComponent(url)}`;
       }
     }
 
@@ -291,160 +345,294 @@ export default function App() {
     a.click();
   };
 
+  const SidebarItem = ({ id, icon: Icon, label }: { id: typeof currentView; icon: any; label: string }) => (
+    <button
+      onClick={() => setCurrentView(id)}
+      className={`w-full flex items-center gap-4 px-6 py-4 transition-all group relative ${currentView === id ? 'text-blue-500' : 'text-gray-500 hover:text-gray-300'}`}
+    >
+      {currentView === id && (
+        <motion.div 
+          layoutId="sidebar-active"
+          className="absolute left-0 w-1 h-8 bg-blue-600 rounded-r-full"
+        />
+      )}
+      <Icon className={`w-5 h-5 transition-transform group-hover:scale-110 ${currentView === id ? 'text-blue-500' : ''}`} />
+      <span className="text-xs font-black uppercase tracking-widest">{label}</span>
+    </button>
+  );
+
   return (
-    <div className="flex flex-col h-screen bg-[#050505] text-white font-sans overflow-hidden">
-      {/* Home Screen Content */}
-      <div className="flex-1 relative overflow-y-auto no-scrollbar">
-        <div className="w-full min-h-full flex flex-col items-center justify-center max-w-4xl mx-auto space-y-16 py-20">
-          <motion.div 
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-center space-y-6"
-          >
-            <div className="w-24 h-24 bg-blue-600 rounded-[2rem] flex items-center justify-center mx-auto shadow-2xl shadow-blue-600/20 mb-4">
-              <Globe className="w-12 h-12 text-white" />
-            </div>
-            <h1 className="text-8xl font-black tracking-tighter text-white uppercase">
-              NEXUS
-            </h1>
-            <p className="text-gray-500 text-xl font-medium tracking-wide">Fast, secure, and unblocked browsing.</p>
-          </motion.div>
-
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.1 }}
-            className="w-full max-w-2xl px-6"
-          >
-            <form onSubmit={handleUrlSubmit} className="relative group">
-              <input
-                type="text"
-                value={urlInput}
-                onChange={(e) => setUrlInput(e.target.value)}
-                placeholder="Enter a URL or search the web..."
-                className="w-full bg-white/5 border border-white/10 rounded-[2rem] py-6 pl-8 pr-32 text-xl focus:outline-none focus:border-blue-500 transition-all shadow-2xl backdrop-blur-xl"
-              />
-              <button 
-                type="submit"
-                className="absolute right-3 top-3 bottom-3 px-10 bg-blue-600 hover:bg-blue-500 rounded-2xl font-black text-sm transition-all shadow-lg shadow-blue-600/20 uppercase tracking-widest"
-              >
-                GO
-              </button>
-            </form>
-          </motion.div>
-
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.2 }}
-            className="grid grid-cols-2 sm:grid-cols-4 gap-6 w-full max-w-2xl px-6"
-          >
-            {shortcuts.map((site) => (
-              <div key={site.name} className="relative group">
-                <button
-                  onClick={() => navigateTo(site.url)}
-                  className="w-full flex flex-col items-center gap-4 p-6 bg-white/5 hover:bg-white/10 rounded-[2rem] border border-white/5 transition-all group"
-                >
-                  <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
-                    <Globe className="w-6 h-6 text-gray-400 group-hover:text-white" />
-                  </div>
-                  <span className="text-xs font-bold text-gray-400 group-hover:text-white uppercase tracking-widest">{site.name}</span>
-                </button>
-                <button 
-                  onClick={(e) => removeShortcut(e, site.name)}
-                  className="absolute top-3 right-3 p-1.5 bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white rounded-lg opacity-0 group-hover:opacity-100 transition-all"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
-            <button
-              onClick={() => setShowAddShortcut(true)}
-              className="flex flex-col items-center justify-center gap-4 p-6 bg-white/5 hover:bg-white/10 rounded-[2rem] border border-dashed border-white/20 transition-all group"
-            >
-              <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                <Plus className="w-6 h-6 text-gray-400 group-hover:text-white" />
-              </div>
-              <span className="text-xs font-bold text-gray-400 group-hover:text-white uppercase tracking-widest">Add Shortcut</span>
-            </button>
-          </motion.div>
-
-          <div className="flex gap-6">
-            <button 
-              onClick={() => setShowSettings(true)}
-              className="px-8 py-3 bg-white/5 hover:bg-white/10 rounded-2xl text-sm font-bold border border-white/10 transition-all flex items-center gap-3 uppercase tracking-widest"
-            >
-              <Settings className="w-4 h-4" />
-              Settings
-            </button>
-            <button 
-              onClick={downloadOffline}
-              className="px-8 py-3 bg-white/5 hover:bg-white/10 rounded-2xl text-sm font-bold border border-white/10 transition-all flex items-center gap-3 uppercase tracking-widest"
-            >
-              <Download className="w-4 h-4" />
-              Offline
-            </button>
+    <div className="flex h-screen bg-[#050505] text-white font-sans overflow-hidden">
+      {/* Sidebar */}
+      <div className="w-64 bg-[#0a0a0a] border-r border-white/5 flex flex-col py-8 z-50">
+        <div className="px-8 mb-12 flex items-center gap-3">
+          <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/20">
+            <Shield className="w-6 h-6 text-white" />
           </div>
+          <h1 className="text-2xl font-black tracking-tighter uppercase">NEXUS</h1>
+        </div>
 
-          {/* Loading Process Section */}
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-            className="w-full max-w-2xl px-6 pt-12"
-          >
-            <div className="glass p-10 rounded-[2.5rem] space-y-8">
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 bg-blue-600/20 rounded-xl flex items-center justify-center">
-                  <Shield className="w-5 h-5 text-blue-500" />
-                </div>
-                <h2 className="text-2xl font-black tracking-tighter uppercase">The Loading Process</h2>
-              </div>
-              
-              <div className="grid gap-6 text-left">
-                <div className="space-y-2">
-                  <h3 className="text-[10px] font-bold text-blue-500 uppercase tracking-[0.2em]">Request Interception</h3>
-                  <p className="text-sm text-gray-400 leading-relaxed">Registers a Service Worker that acts as a programmable network proxy, intercepting all outgoing fetch and asset requests before they reach the browser's standard network layer.</p>
-                </div>
-                
-                <div className="space-y-2">
-                  <h3 className="text-[10px] font-bold text-blue-500 uppercase tracking-[0.2em]">URL Encoding/Decoding</h3>
-                  <p className="text-sm text-gray-400 leading-relaxed">Real website URLs are encoded into "proxy URLs" using custom XOR-Base64 codecs. When you enter a site, it's converted into a path like <code className="bg-white/5 px-2 py-0.5 rounded text-blue-400">/nexus/encoded_string</code>.</p>
-                </div>
-                
-                <div className="space-y-2">
-                  <h3 className="text-[10px] font-bold text-blue-500 uppercase tracking-[0.2em]">Wisp Protocol Transport</h3>
-                  <p className="text-sm text-gray-400 leading-relaxed">To move data past restrictive firewalls, Nexus uses the Wisp protocol to tunnel multiple TCP/UDP connections over a single WebSocket connection, masking traffic as standard web activity.</p>
-                </div>
-                
-                <div className="space-y-2">
-                  <h3 className="text-[10px] font-bold text-blue-500 uppercase tracking-[0.2em]">Content Rewriting</h3>
-                  <p className="text-sm text-gray-400 leading-relaxed">A JavaScript rewriter modifies HTML, CSS, and JS on the fly, ensuring all links, scripts, and media are routed back through the Nexus proxy instead of connecting directly to original servers.</p>
-                </div>
-                
-                <div className="space-y-2">
-                  <h3 className="text-[10px] font-bold text-blue-500 uppercase tracking-[0.2em]">Dynamic Rendering</h3>
-                  <p className="text-sm text-gray-400 leading-relaxed">The Service Worker serves modified content back to the browser tab, allowing the site to function normally even though every request is being proxied.</p>
-                </div>
-              </div>
+        <nav className="flex-1 space-y-2">
+          <SidebarItem id="home" icon={Home} label="Home" />
+          <SidebarItem id="apps" icon={LayoutGrid} label="Apps" />
+          <SidebarItem id="games" icon={Gamepad2} label="Games" />
+          <SidebarItem id="youtube" icon={Youtube} label="YouTube" />
+          <div className="pt-8 mt-8 border-t border-white/5">
+            <SidebarItem id="settings" icon={Settings} label="Settings" />
+          </div>
+        </nav>
+
+        <div className="px-6 mt-auto">
+          <div className="p-4 bg-white/5 rounded-2xl border border-white/5 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Status</span>
+              <div className={`w-2 h-2 rounded-full ${bareStatus === 'online' ? 'bg-green-500' : 'bg-red-500'}`} />
             </div>
-          </motion.div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Transport</span>
+              <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Epoxy</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Status Bar */}
-      <div className="h-10 bg-[#0a0a0a] border-t border-white/5 flex items-center px-6 justify-between text-[10px] font-bold uppercase tracking-[0.2em] text-gray-500">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3">
-            <div className={`w-1.5 h-1.5 rounded-full ${bareStatus === 'online' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]'}`} />
-            Bare Server: {bareStatus}
-          </div>
-          <div className="flex items-center gap-3">
-            <div className={`w-1.5 h-1.5 rounded-full ${bareStatus === 'online' ? 'bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]' : 'bg-gray-500'}`} />
-            Wisp Protocol: {bareStatus === 'online' ? 'Active' : 'Standby'}
-          </div>
-        </div>
-        <div>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+      {/* Main Content */}
+      <div className="flex-1 relative overflow-y-auto no-scrollbar bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.05),transparent_40%)]">
+        <AnimatePresence mode="wait">
+          {currentView === 'home' && (
+            <motion.div 
+              key="home"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="w-full min-h-full flex flex-col items-center justify-center max-w-4xl mx-auto space-y-16 py-20"
+            >
+              <div className="text-center space-y-6">
+                <h1 className="text-8xl font-black tracking-tighter text-white uppercase">
+                  NEXUS
+                </h1>
+                <p className="text-gray-500 text-xl font-medium tracking-wide italic">The Interception-Based Web Proxy.</p>
+              </div>
+
+              <div className="w-full max-w-2xl px-6">
+                <form onSubmit={handleUrlSubmit} className="relative group">
+                  <input
+                    type="text"
+                    value={urlInput}
+                    onChange={(e) => setUrlInput(e.target.value)}
+                    placeholder="Enter a URL or search the web..."
+                    className="w-full bg-white/5 border border-white/10 rounded-[2rem] py-6 pl-8 pr-32 text-xl focus:outline-none focus:border-blue-500 transition-all shadow-2xl backdrop-blur-xl"
+                  />
+                  <button 
+                    type="submit"
+                    className="absolute right-3 top-3 bottom-3 px-10 bg-blue-600 hover:bg-blue-500 rounded-2xl font-black text-sm transition-all shadow-lg shadow-blue-600/20 uppercase tracking-widest"
+                  >
+                    GO
+                  </button>
+                </form>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 w-full max-w-2xl px-6">
+                {shortcuts.map((site) => (
+                  <div key={site.name} className="relative group">
+                    <button
+                      onClick={() => navigateTo(site.url)}
+                      className="w-full flex flex-col items-center gap-4 p-6 bg-white/5 hover:bg-white/10 rounded-[2rem] border border-white/5 transition-all group"
+                    >
+                      <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
+                        <Globe className="w-6 h-6 text-gray-400 group-hover:text-white" />
+                      </div>
+                      <span className="text-xs font-bold text-gray-400 group-hover:text-white uppercase tracking-widest">{site.name}</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+
+          {currentView === 'apps' && (
+            <motion.div 
+              key="apps"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="w-full max-w-6xl mx-auto py-20 px-12"
+            >
+              <div className="mb-12">
+                <h2 className="text-6xl font-black tracking-tighter uppercase mb-4">Apps</h2>
+                <p className="text-gray-500 font-medium tracking-wide italic">Access your favorite web applications securely.</p>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
+                {apps.map((app) => (
+                  <button
+                    key={app.name}
+                    onClick={() => navigateTo(app.url)}
+                    className="flex flex-col items-center gap-6 p-8 bg-white/5 hover:bg-white/10 rounded-[2.5rem] border border-white/5 transition-all group"
+                  >
+                    <div className="w-20 h-20 bg-white/5 rounded-3xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-2xl overflow-hidden p-4">
+                      <img src={app.icon} alt={app.name} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                    </div>
+                    <span className="text-sm font-black uppercase tracking-widest text-gray-400 group-hover:text-white">{app.name}</span>
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          )}
+
+          {currentView === 'games' && (
+            <motion.div 
+              key="games"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="w-full max-w-6xl mx-auto py-20 px-12"
+            >
+              <div className="mb-12">
+                <h2 className="text-6xl font-black tracking-tighter uppercase mb-4">Games</h2>
+                <p className="text-gray-500 font-medium tracking-wide italic">Unblocked gaming at your fingertips.</p>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
+                {games.map((game) => (
+                  <button
+                    key={game.name}
+                    onClick={() => navigateTo(game.url)}
+                    className="flex flex-col items-center gap-6 p-8 bg-white/5 hover:bg-white/10 rounded-[2.5rem] border border-white/5 transition-all group"
+                  >
+                    <div className="w-20 h-20 bg-white/5 rounded-3xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-2xl overflow-hidden p-4">
+                      <img src={game.icon} alt={game.name} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                    </div>
+                    <span className="text-sm font-black uppercase tracking-widest text-gray-400 group-hover:text-white">{game.name}</span>
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          )}
+
+          {currentView === 'youtube' && (
+            <motion.div 
+              key="youtube"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="w-full min-h-full flex flex-col items-center justify-center max-w-4xl mx-auto space-y-12 py-20"
+            >
+              <div className="text-center space-y-6">
+                <div className="w-24 h-24 bg-red-600 rounded-[2rem] flex items-center justify-center mx-auto shadow-2xl shadow-red-600/20 mb-4">
+                  <Youtube className="w-12 h-12 text-white" />
+                </div>
+                <h2 className="text-6xl font-black tracking-tighter uppercase">YouTube</h2>
+                <p className="text-gray-500 font-medium tracking-wide italic">Watch videos without restrictions.</p>
+              </div>
+              <button
+                onClick={() => navigateTo('https://www.youtube.com')}
+                className="px-12 py-6 bg-red-600 hover:bg-red-500 rounded-[2rem] text-xl font-black transition-all shadow-2xl shadow-red-600/20 uppercase tracking-widest flex items-center gap-4"
+              >
+                Launch YouTube
+                <ExternalLink className="w-6 h-6" />
+              </button>
+            </motion.div>
+          )}
+
+          {currentView === 'settings' && (
+            <motion.div 
+              key="settings"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="w-full max-w-4xl mx-auto py-20 px-12"
+            >
+              <div className="mb-12">
+                <h2 className="text-6xl font-black tracking-tighter uppercase mb-4">Settings</h2>
+                <p className="text-gray-500 font-medium tracking-wide italic">Customize your Nexus experience.</p>
+              </div>
+
+              <div className="space-y-12">
+                {/* Tab Cloak */}
+                <section className="space-y-6">
+                  <div className="flex items-center gap-3 px-2">
+                    <Globe className="w-5 h-5 text-blue-500" />
+                    <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Tab Cloaking</h3>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                    {Object.entries(cloaks).map(([key, cloak]) => (
+                      <button
+                        key={key}
+                        onClick={() => setTabCloak(key)}
+                        className={`p-6 rounded-3xl border transition-all flex flex-col items-center gap-4 ${tabCloak === key ? 'bg-blue-600/10 border-blue-500/50' : 'bg-white/5 border-white/5 hover:bg-white/10'}`}
+                      >
+                        <img src={cloak.icon} alt={cloak.title} className="w-8 h-8 rounded-lg" referrerPolicy="no-referrer" />
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-center">{cloak.title}</span>
+                        {tabCloak === key && <Check className="w-4 h-4 text-blue-500" />}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                {/* Search Engine */}
+                <section className="space-y-6">
+                  <div className="flex items-center gap-3 px-2">
+                    <Search className="w-5 h-5 text-blue-500" />
+                    <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Search Engine</h3>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    {Object.keys(searchEngines).map((engine) => (
+                      <button
+                        key={engine}
+                        onClick={() => setSearchEngine(engine)}
+                        className={`p-6 rounded-3xl border transition-all flex flex-col items-center gap-4 ${searchEngine === engine ? 'bg-blue-600/10 border-blue-500/50' : 'bg-white/5 border-white/5 hover:bg-white/10'}`}
+                      >
+                        <span className="text-[10px] font-black uppercase tracking-widest">{engine}</span>
+                        {searchEngine === engine && <Check className="w-4 h-4 text-blue-500" />}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                {/* Proxy Management */}
+                <section className="space-y-6">
+                  <div className="flex items-center gap-3 px-2">
+                    <Shield className="w-5 h-5 text-blue-500" />
+                    <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Proxy Management</h3>
+                  </div>
+                  <div className="bg-white/5 rounded-[2.5rem] border border-white/5 p-8 space-y-8">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-1">
+                        <p className="text-sm font-black uppercase tracking-widest">Service Worker Interception</p>
+                        <p className="text-[10px] text-gray-500 font-medium">Standard proxy method using SW fetch events.</p>
+                      </div>
+                      <div className="w-12 h-6 bg-blue-600 rounded-full p-1 flex justify-end">
+                        <div className="w-4 h-4 bg-white rounded-full" />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-1">
+                        <p className="text-sm font-black uppercase tracking-widest">Epoxy TLS Transport</p>
+                        <p className="text-[10px] text-gray-500 font-medium">Enhanced client-side TLS stack for better compatibility.</p>
+                      </div>
+                      <div className="w-12 h-6 bg-blue-600 rounded-full p-1 flex justify-end">
+                        <div className="w-4 h-4 bg-white rounded-full" />
+                      </div>
+                    </div>
+                    <div className="pt-8 border-t border-white/5">
+                      <button 
+                        onClick={() => {
+                          if (confirm('Clear all session data?')) {
+                            localStorage.clear();
+                            window.location.reload();
+                          }
+                        }}
+                        className="w-full py-4 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border border-red-500/20 flex items-center justify-center gap-3"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Clear All Data
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Loading Overlay */}
@@ -510,200 +698,6 @@ export default function App() {
               </div>
             </div>
           </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Modals */}
-      <AnimatePresence>
-        {showAddShortcut && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              className="w-full max-w-md bg-[#111] border border-white/10 rounded-[2.5rem] p-10 shadow-2xl space-y-8"
-            >
-              <div className="flex items-center justify-between">
-                <h2 className="text-3xl font-black tracking-tighter text-white uppercase">Add Shortcut</h2>
-                <button onClick={() => setShowAddShortcut(false)} className="p-2 hover:bg-white/5 rounded-xl transition-all">
-                  <X className="w-6 h-6 text-gray-400" />
-                </button>
-              </div>
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.2em] ml-1">Name</label>
-                  <input 
-                    type="text" 
-                    value={newShortcutName}
-                    onChange={(e) => setNewShortcutName(e.target.value)}
-                    placeholder="e.g. Google" 
-                    className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 text-sm focus:outline-none focus:border-blue-500 transition-all" 
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.2em] ml-1">URL</label>
-                  <input 
-                    type="text" 
-                    value={newShortcutUrl}
-                    onChange={(e) => setNewShortcutUrl(e.target.value)}
-                    placeholder="e.g. google.com" 
-                    className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 text-sm focus:outline-none focus:border-blue-500 transition-all" 
-                  />
-                </div>
-              </div>
-              <button 
-                onClick={addShortcut}
-                className="w-full py-5 bg-blue-600 hover:bg-blue-500 rounded-2xl text-lg font-black transition-all shadow-xl shadow-blue-600/20 uppercase tracking-widest"
-              >
-                Add Shortcut
-              </button>
-            </motion.div>
-          </div>
-        )}
-
-        {showCookies && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              className="w-full max-w-2xl bg-[#111] border border-white/10 rounded-[2.5rem] p-10 shadow-2xl space-y-8 max-h-[80vh] overflow-y-auto no-scrollbar"
-            >
-              <div className="flex items-center justify-between">
-                <h2 className="text-3xl font-black tracking-tighter text-white uppercase">Cookie Manager</h2>
-                <button onClick={() => setShowCookies(false)} className="p-2 hover:bg-white/5 rounded-xl transition-all">
-                  <X className="w-6 h-6 text-gray-400" />
-                </button>
-              </div>
-              
-              <div className="space-y-6">
-                <div className="flex items-center justify-between bg-white/5 p-6 rounded-3xl border border-white/5">
-                  <div>
-                    <p className="text-sm font-bold text-white">Active Session Cookies</p>
-                    <p className="text-xs text-gray-500">These cookies are stored in your current proxy session.</p>
-                  </div>
-                  <button 
-                    onClick={fetchCookies}
-                    className="p-3 bg-blue-600/10 hover:bg-blue-600/20 text-blue-500 rounded-xl transition-all"
-                  >
-                    <RotateCw className="w-5 h-5" />
-                  </button>
-                </div>
-
-                <div className="space-y-3">
-                  {cookies.length > 0 ? (
-                    cookies.map((c, i) => (
-                      <div key={i} className="bg-white/5 rounded-2xl p-6 border border-white/5 space-y-2 group">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest">{c.domain || 'Global'}</span>
-                          <span className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">{c.key}</span>
-                        </div>
-                        <p className="text-xs font-mono break-all text-gray-400 bg-black/20 p-3 rounded-xl">{c.value}</p>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-center py-20 bg-white/5 rounded-[2rem] border border-dashed border-white/10">
-                      <p className="text-sm font-bold text-gray-600 uppercase tracking-widest">No cookies found</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-
-        {showSettings && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              className="w-full max-w-2xl bg-[#111] border border-white/10 rounded-[2.5rem] p-10 shadow-2xl space-y-8 max-h-[80vh] overflow-y-auto no-scrollbar"
-            >
-              <div className="flex items-center justify-between">
-                <h2 className="text-3xl font-black tracking-tighter text-white uppercase">Settings</h2>
-                <button onClick={() => setShowSettings(false)} className="p-2 hover:bg-white/5 rounded-xl transition-all">
-                  <X className="w-6 h-6 text-gray-400" />
-                </button>
-              </div>
-              
-              <div className="space-y-10">
-                <section className="space-y-4">
-                  <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.2em] ml-1">General Settings</h3>
-                  <div className="bg-white/5 rounded-3xl p-6 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-bold text-white uppercase tracking-widest">Vercel Mode</p>
-                        <p className="text-[10px] text-gray-500 uppercase tracking-widest">Optimizes proxy for Vercel's serverless environment.</p>
-                      </div>
-                      <button 
-                        onClick={() => setVercelMode(!vercelMode)}
-                        className={`w-14 h-8 rounded-full p-1 transition-all ${vercelMode ? 'bg-blue-600' : 'bg-white/10'}`}
-                      >
-                        <div className={`w-6 h-6 bg-white rounded-full transition-all transform ${vercelMode ? 'translate-x-6' : 'translate-x-0'}`} />
-                      </button>
-                    </div>
-                  </div>
-                </section>
-
-                <section className="space-y-4">
-                  <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.2em] ml-1">Session Management</h3>
-                  <div className="bg-white/5 rounded-3xl p-6 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-bold text-white">Clear All Cookies</p>
-                        <p className="text-xs text-gray-500">Reset your browsing session and delete all site data.</p>
-                      </div>
-                      <button 
-                        onClick={() => {
-                          if (confirm('Are you sure? This will clear all cookies.')) {
-                            document.cookie = 'SessionID=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-                            window.location.reload();
-                          }
-                        }}
-                        className="p-3 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-xl transition-all"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
-                    </div>
-                  </div>
-                </section>
-
-                <section className="space-y-4">
-                  <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.2em] ml-1">Proxy Information</h3>
-                  <div className="bg-white/5 rounded-3xl p-6 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-bold text-white">Service Worker Status</p>
-                      <span className="text-xs font-bold text-green-500 uppercase tracking-widest">Active</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-bold text-white">Encoding Method</p>
-                      <span className="text-xs font-bold text-blue-500 uppercase tracking-widest">XOR-Base64</span>
-                    </div>
-                  </div>
-                </section>
-
-                <section className="space-y-4">
-                  <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.2em] ml-1">Active Cookies</h3>
-                  <button 
-                    onClick={fetchCookies}
-                    className="w-full py-4 bg-white/5 hover:bg-white/10 rounded-2xl text-xs font-bold uppercase tracking-widest transition-all border border-white/5"
-                  >
-                    Load Cookies
-                  </button>
-                  {cookies.length > 0 && (
-                    <div className="space-y-2">
-                      {cookies.map((c, i) => (
-                        <div key={i} className="bg-white/5 rounded-2xl p-4 text-[10px] font-mono break-all border border-white/5">
-                          <span className="text-blue-400">{c.domain}</span>: {c.key}={c.value}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
-              </div>
-            </motion.div>
-          </div>
         )}
       </AnimatePresence>
     </div>
