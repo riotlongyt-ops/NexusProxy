@@ -32,6 +32,22 @@ async function startServer() {
     res.json(NexusController.getStatus());
   });
 
+  app.get("/api/suggestions", async (req, res) => {
+    const query = req.query.q;
+    if (!query) return res.json([]);
+
+    try {
+      const response = await axios.get(`https://suggestqueries.google.com/complete/search?client=firefox&q=${encodeURIComponent(query as string)}`, {
+        httpAgent,
+        httpsAgent,
+      });
+      // Google returns [query, [suggestions]]
+      res.json(response.data[1] || []);
+    } catch (error) {
+      res.json([]);
+    }
+  });
+
   // Proxy Route
   app.all(`${nexusConfig.prefix}*`, express.raw({ type: '*/*', limit: '50mb' }), async (req, res) => {
     const encodedUrl = req.path.split(nexusConfig.prefix)[1];
