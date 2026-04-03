@@ -1,7 +1,8 @@
 // public/nexus-client.js
-(function() {
+(async function() {
   const config = {
     prefix: '/nexus/',
+    wispUrl: (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/wisp/',
     encodeUrl: (url) => {
       if (!url) return url;
       const xored = url.split('').map((char, i) => i % 2 ? String.fromCharCode(char.charCodeAt(0) ^ 2) : char).join('');
@@ -29,7 +30,9 @@
 
   // Proxy URL function
   window.nexusProxyUrl = function(url) {
-    if (!url || typeof url !== 'string') return url;
+    if (!url) return url;
+    if (url instanceof URL) url = url.href;
+    if (typeof url !== 'string') return url;
     if (url.startsWith('data:') || url.startsWith('javascript:') || url.startsWith('blob:') || url.includes(config.prefix)) return url;
     
     try {
@@ -55,6 +58,7 @@
       if (prop === 'assign' || prop === 'replace') return (url) => originalLocation[prop](window.nexusProxyUrl(url));
       if (prop === 'reload') return () => originalLocation.reload();
       if (prop === 'toString') return () => baseUrl.href;
+      if (typeof baseUrl[prop] === 'function') return baseUrl[prop].bind(baseUrl);
       return baseUrl[prop];
     },
     set(target, prop, value) {
@@ -67,40 +71,56 @@
   // Override globals
   window.__nexus_location = locationProxy;
   
-  // Intercept element creation
-  const originalCreateElement = document.createElement;
-  document.createElement = function(tagName, options) {
-    const el = originalCreateElement.call(this, tagName, options);
-    const tag = tagName.toLowerCase();
-    
-    if (['img', 'script', 'iframe', 'link', 'video', 'audio', 'source', 'form', 'a'].includes(tag)) {
-      const originalSetAttribute = el.setAttribute;
-      el.setAttribute = function(name, value) {
-        if (['src', 'href', 'action', 'data'].includes(name) && value) {
-          value = window.nexusProxyUrl(value);
-        }
-        return originalSetAttribute.call(this, name, value);
-      };
+  // Intercept element properties
+  const rewriteProperty = (obj, prop, attr) => {
+    const original = Object.getOwnPropertyDescriptor(obj, prop);
+    if (!original || !original.configurable) return;
 
-      const prop = (tag === 'link' || tag === 'a') ? 'href' : (tag === 'form' ? 'action' : 'src');
-      try {
-        Object.defineProperty(el, prop, {
-          get() { return el.getAttribute(prop); },
-          set(val) { el.setAttribute(prop, val); }
-        });
-      } catch(e) {}
-    }
-    return el;
+    Object.defineProperty(obj, prop, {
+      get() {
+        const val = original.get.call(this);
+        if (val && val.includes(config.prefix)) {
+          try {
+            const encoded = val.split(config.prefix)[1];
+            return config.decodeUrl(encoded);
+          } catch(e) {}
+        }
+        return val;
+      },
+      set(val) {
+        return original.set.call(this, window.nexusProxyUrl(val));
+      }
+    });
   };
+
+  rewriteProperty(HTMLAnchorElement.prototype, 'href', 'href');
+  rewriteProperty(HTMLImageElement.prototype, 'src', 'src');
+  rewriteProperty(HTMLScriptElement.prototype, 'src', 'src');
+  rewriteProperty(HTMLLinkElement.prototype, 'href', 'href');
+  rewriteProperty(HTMLIFrameElement.prototype, 'src', 'src');
+  rewriteProperty(HTMLFormElement.prototype, 'action', 'action');
 
   // Intercept fetch
   const originalFetch = window.fetch;
   window.fetch = function(input, init) {
+    let url;
     if (typeof input === 'string') {
+      url = input;
+      input = window.nexusProxyUrl(input);
+    } else if (input instanceof URL) {
+      url = input.href;
       input = window.nexusProxyUrl(input);
     } else if (input instanceof Request) {
+      url = input.url;
       input = new Request(window.nexusProxyUrl(input.url), input);
     }
+    
+    // Add some common headers if missing
+    if (init && !init.headers) init.headers = {};
+    if (init && init.headers && !init.headers['Referer']) {
+      // We can't actually set Referer in browser fetch, but we can try to hint it
+    }
+
     return originalFetch.call(this, input, init);
   };
 
@@ -108,6 +128,58 @@
   const originalOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function(method, url, ...args) {
     return originalOpen.call(this, method, window.nexusProxyUrl(url), ...args);
+  };
+
+  // Intercept cookies
+  const originalCookie = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie');
+  if (originalCookie && originalCookie.configurable) {
+    Object.defineProperty(document, 'cookie', {
+      get() {
+        return originalCookie.get.call(this);
+      },
+      set(val) {
+        return originalCookie.set.call(this, val);
+      }
+    });
+  }
+
+  // Intercept sendBeacon
+  const originalSendBeacon = navigator.sendBeacon;
+  navigator.sendBeacon = function(url, data) {
+    return originalSendBeacon.call(this, window.nexusProxyUrl(url), data);
+  };
+
+  // Wisp WebSocket Interception
+  try {
+    const { WispClient } = await import('https://cdn.jsdelivr.net/npm/@mercuryworkshop/wisp-js@1.1.0/dist/index.mjs');
+    const wisp = new WispClient(config.wispUrl);
+
+    const originalWebSocket = window.WebSocket;
+    window.WebSocket = function(url, protocols) {
+      console.log('Nexus: Proxying WebSocket to:', url);
+      try {
+        const absolute = new URL(url, baseUrl).href;
+        return wisp.WebSocket(absolute, protocols);
+      } catch (e) {
+        return new originalWebSocket(url, protocols);
+      }
+    };
+    window.WebSocket.prototype = originalWebSocket.prototype;
+  } catch (e) {
+    console.warn('Nexus: Wisp WebSocket proxying failed:', e);
+  }
+
+  // History API proxy
+  const originalPushState = history.pushState;
+  history.pushState = function(state, title, url) {
+    if (url) url = window.nexusProxyUrl(url);
+    return originalPushState.call(this, state, title, url);
+  };
+
+  const originalReplaceState = history.replaceState;
+  history.replaceState = function(state, title, url) {
+    if (url) url = window.nexusProxyUrl(url);
+    return originalReplaceState.call(this, state, title, url);
   };
 
   console.log("Nexus Emulator Active for:", baseUrl.href);

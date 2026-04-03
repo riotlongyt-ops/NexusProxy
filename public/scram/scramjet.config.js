@@ -1,1 +1,0 @@
-(()=>{self.__scramjet$config={prefix:"/scramjet/",codec:self.__scramjet$codecs.xor,config:"/scram/scramjet.config.js",bundle:"/scram/scramjet.bundle.js",worker:"/scram/scramjet.worker.js",client:"/scram/scramjet.client.js",codecs:"/scram/scramjet.codecs.js"};})();

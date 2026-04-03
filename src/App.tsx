@@ -279,7 +279,7 @@ export default function App() {
   // Register Service Worker and handle query params
   useEffect(() => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js', { scope: '/' })
+      navigator.serviceWorker.register('/sw.js', { scope: '/', type: 'module' })
         .then((registration) => {
           console.log('Service Worker registered with scope:', registration.scope);
         })

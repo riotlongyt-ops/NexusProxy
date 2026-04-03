@@ -1,6 +1,7 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import fs from "fs";
 import http from "http";
 import https from "https";
 import axios from "axios";
@@ -32,6 +33,35 @@ async function startServer() {
     res.json(NexusController.getStatus());
   });
 
+  // Serve static assets directly at the top to avoid ANY redirects or Vite interference
+  // This is critical for Service Worker registration
+  app.get("/sw.js", (req, res) => {
+    try {
+      const swPath = path.resolve(process.cwd(), "public", "sw.js");
+      const content = fs.readFileSync(swPath);
+      res.setHeader("Content-Type", "application/javascript");
+      res.setHeader("Service-Worker-Allowed", "/");
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.status(200).send(content);
+    } catch (e) {
+      console.error("Failed to serve sw.js:", e);
+      res.status(404).send("Service Worker not found");
+    }
+  });
+
+  app.get("/nexus-client.js", (req, res) => {
+    try {
+      const clientPath = path.resolve(process.cwd(), "public", "nexus-client.js");
+      const content = fs.readFileSync(clientPath);
+      res.setHeader("Content-Type", "application/javascript");
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.status(200).send(content);
+    } catch (e) {
+      console.error("Failed to serve nexus-client.js:", e);
+      res.status(404).send("Client script not found");
+    }
+  });
+
   app.get("/api/suggestions", async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json([]);
@@ -60,7 +90,7 @@ async function startServer() {
       
       // Clean up headers to avoid conflicts
       const proxyHeaders: any = {};
-      const skipHeaders = ['host', 'connection', 'content-length', 'accept-encoding', 'cookie', 'referer', 'origin'];
+      const skipHeaders = ['host', 'connection', 'content-length', 'accept-encoding', 'cookie', 'referer', 'origin', 'cf-ray', 'cf-connecting-ip', 'x-forwarded-for', 'x-forwarded-proto'];
       Object.entries(req.headers).forEach(([key, value]) => {
         if (!skipHeaders.includes(key.toLowerCase())) {
           proxyHeaders[key] = value;
@@ -79,7 +109,7 @@ async function startServer() {
           'accept-encoding': 'gzip, deflate, br',
         },
         responseType: 'arraybuffer',
-        decompress: false, // Handle manually to avoid zlib errors
+        decompress: false,
         maxRedirects: 0,
         validateStatus: () => true,
         httpAgent,
@@ -98,7 +128,6 @@ async function startServer() {
             try {
               data = zlib.inflateSync(data);
             } catch (e) {
-              // Try raw deflate if zlib header check fails
               data = zlib.inflateRawSync(data);
             }
           } else if (contentEncoding.includes('br')) {
@@ -106,15 +135,17 @@ async function startServer() {
           }
         } catch (e: any) {
           console.warn(`Nexus: Decompression failed for ${targetUrl}: ${e.message}`);
-          // If decompression fails, we keep the original data and hope for the best
-          // or just proceed if it wasn't actually compressed despite the header
         }
       }
 
       // Handle Redirects
       if (response.status >= 300 && response.status < 400 && response.headers.location) {
-        const redirectUrl = new URL(response.headers.location, targetUrl).href;
-        return res.redirect(`${nexusConfig.prefix}${nexusConfig.encodeUrl(redirectUrl)}`);
+        try {
+          const redirectUrl = new URL(response.headers.location, targetUrl).href;
+          return res.redirect(`${nexusConfig.prefix}${nexusConfig.encodeUrl(redirectUrl)}`);
+        } catch (e) {
+          return res.redirect(response.headers.location);
+        }
       }
 
       const contentType = response.headers['content-type'] || '';
@@ -123,45 +154,35 @@ async function startServer() {
         const html = data.toString('utf-8');
         const $ = cheerio.load(html);
 
-        // Inject emulator script
-        $('head').prepend(`<script src="/nexus-client.js"></script>`);
-        
-        // Inject SW registration
-        $('head').append(`
+        // Inject emulator script and SW registration
+        $('head').prepend(`
+          <script src="/nexus-client.js"></script>
           <script>
             if ('serviceWorker' in navigator) {
-              navigator.serviceWorker.register('/sw.js', { scope: '${nexusConfig.prefix}' }).then(reg => {
+              navigator.serviceWorker.register('/sw.js', { 
+                scope: '${nexusConfig.prefix}',
+                type: 'module'
+              }).then(reg => {
                 console.log('Nexus SW registered:', reg);
               });
             }
           </script>
         `);
 
-        // HTML rewriting
-        const rewriteAttr = (selector: string, attr: string) => {
-          $(selector).each((_, el) => {
-            const val = $(el).attr(attr);
-            if (val && !val.startsWith('data:') && !val.startsWith('javascript:') && !val.startsWith(nexusConfig.prefix)) {
-              try {
-                const absolute = new URL(val, targetUrl).href;
-                $(el).attr(attr, `${nexusConfig.prefix}${nexusConfig.encodeUrl(absolute)}`);
-              } catch (e) {}
-            }
-          });
+        // Optimized rewriting
+        const rewriteUrl = (val: string) => {
+          if (!val || val.startsWith('data:') || val.startsWith('javascript:') || val.startsWith('blob:') || val.startsWith(nexusConfig.prefix)) return val;
+          try {
+            const absolute = new URL(val, targetUrl).href;
+            return `${nexusConfig.prefix}${nexusConfig.encodeUrl(absolute)}`;
+          } catch (e) {
+            return val;
+          }
         };
 
-        rewriteAttr('a', 'href');
-        rewriteAttr('img', 'src');
-        rewriteAttr('script', 'src');
-        rewriteAttr('link', 'href');
-        rewriteAttr('form', 'action');
-        rewriteAttr('iframe', 'src');
-        rewriteAttr('source', 'src');
-        rewriteAttr('video', 'src');
-        rewriteAttr('audio', 'src');
-        rewriteAttr('area', 'href');
-        rewriteAttr('embed', 'src');
-        rewriteAttr('track', 'src');
+        $('[href]').each((_, el) => { $(el).attr('href', rewriteUrl($(el).attr('href')!)); });
+        $('[src]').each((_, el) => { $(el).attr('src', rewriteUrl($(el).attr('src')!)); });
+        $('[action]').each((_, el) => { $(el).attr('action', rewriteUrl($(el).attr('action')!)); });
 
         // Handle srcset
         $('img[srcset], source[srcset]').each((_, el) => {
@@ -173,12 +194,7 @@ async function startServer() {
               const parts = trimmed.split(/\s+/);
               const url = parts[0];
               const size = parts.slice(1).join(' ');
-              try {
-                const absolute = new URL(url, targetUrl).href;
-                return `${nexusConfig.prefix}${nexusConfig.encodeUrl(absolute)}${size ? ' ' + size : ''}`;
-              } catch (e) {
-                return part;
-              }
+              return `${rewriteUrl(url)}${size ? ' ' + size : ''}`;
             }).join(', ');
             $(el).attr('srcset', rewritten);
           }
@@ -188,37 +204,42 @@ async function startServer() {
         $('[style]').each((_, el) => {
           const style = $(el).attr('style') || '';
           const rewritten = style.replace(/url\(['"]?([^'"]+)['"]?\)/g, (match, url) => {
-            if (url.startsWith('data:') || url.startsWith('blob:')) return match;
-            try {
-              const absolute = new URL(url, targetUrl).href;
-              return `url("${nexusConfig.prefix}${nexusConfig.encodeUrl(absolute)}")`;
-            } catch (e) {
-              return match;
-            }
+            return `url("${rewriteUrl(url)}")`;
           });
           $(el).attr('style', rewritten);
         });
 
         data = Buffer.from($.html(), 'utf-8');
-      }
- else if (contentType.includes('text/css')) {
+      } else if (contentType.includes('text/css')) {
+        const rewriteUrl = (val: string) => {
+          if (!val || val.startsWith('data:') || val.startsWith('javascript:') || val.startsWith('blob:') || val.startsWith(nexusConfig.prefix)) return val;
+          try {
+            const absolute = new URL(val, targetUrl).href;
+            return `${nexusConfig.prefix}${nexusConfig.encodeUrl(absolute)}`;
+          } catch (e) {
+            return val;
+          }
+        };
         let css = data.toString('utf-8');
         css = css.replace(/url\(['"]?([^'"]+)['"]?\)/g, (match, url) => {
-          if (url.startsWith('data:') || url.startsWith('blob:')) return match;
-          try {
-            const absolute = new URL(url, targetUrl).href;
-            return `url("${nexusConfig.prefix}${nexusConfig.encodeUrl(absolute)}")`;
-          } catch (e) {
-            return match;
-          }
+          return `url("${rewriteUrl(url)}")`;
         });
         data = Buffer.from(css, 'utf-8');
+      } else if (contentType.includes('application/javascript') || contentType.includes('text/javascript')) {
+        let js = data.toString('utf-8');
+        // Basic JS rewriting for location proxying
+        js = js.replace(/window\.location/g, 'window.__nexus_location');
+        js = js.replace(/document\.location/g, 'window.__nexus_location');
+        // Only replace location. if it's not preceded by a dot (to avoid property access)
+        js = js.replace(/(?<!\.)location\./g, 'window.__nexus_location.');
+        data = Buffer.from(js, 'utf-8');
       }
 
       // Forward headers
       const forbiddenHeaders = [
         'content-encoding', 'transfer-encoding', 'content-security-policy', 
-        'x-frame-options', 'location', 'set-cookie'
+        'x-frame-options', 'location', 'set-cookie', 'strict-transport-security',
+        'content-length'
       ];
 
       Object.entries(response.headers).forEach(([key, value]) => {
@@ -227,10 +248,15 @@ async function startServer() {
         }
       });
 
-      // Handle cookies (simplified for now)
+      // Handle cookies
       const setCookies = response.headers['set-cookie'];
       if (setCookies) {
         res.set('x-nexus-set-cookie', JSON.stringify(setCookies));
+      }
+
+      // Ensure no sniff for JS
+      if (contentType.includes('javascript')) {
+        res.set('X-Content-Type-Options', 'nosniff');
       }
 
       res.status(response.status).send(data);
