@@ -2,13 +2,17 @@
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --color-nexus-bg: #111111;
+  --color-nexus-card: #222222;
+  --color-nexus-accent: #ffffff;
 }
 
 body {
-  @apply bg-[#1a1a1a] text-white;
+  @apply bg-nexus-bg text-white;
   margin: 0;
   padding: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  font-family: var(--font-sans);
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -18,6 +22,50 @@ body {
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+.nexus-bg {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  background-color: #111111;
+  overflow: hidden;
+}
+
+.nexus-bg::before,
+.nexus-bg::after {
+  content: "";
+  position: absolute;
+  width: 200%;
+  height: 200%;
+  top: 50%;
+  left: 50%;
+  background: radial-gradient(circle at center, rgba(255, 255, 255, 0.03) 0%, transparent 70%);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.wavy-shape {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 40%;
+  background: linear-gradient(to top, rgba(255, 255, 255, 0.02), transparent);
+  clip-path: ellipse(80% 50% at 50% 100%);
+}
+
+.wavy-shape-2 {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 30%;
+  background: linear-gradient(to top, rgba(255, 255, 255, 0.01), transparent);
+  clip-path: ellipse(100% 40% at 50% 100%);
 }
 
 iframe {
